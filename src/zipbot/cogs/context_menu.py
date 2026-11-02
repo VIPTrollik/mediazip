@@ -8,8 +8,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from zipbot import handlers
-from zipbot.views import send_ephemeral
+from zipbot import handlers, views
 
 if TYPE_CHECKING:
     from zipbot.bot import ZipBot
@@ -48,18 +47,16 @@ class ContextMenus(commands.Cog):
     @per_user_cooldown
     async def download(self, interaction: discord.Interaction, message: discord.Message) -> None:
         payload = handlers.interaction_payload(interaction, message)
-        content, view = handlers.download_reply(
-            self.bot, interaction.user.id, payload, handlers.message_key(message)
-        )
-        await send_ephemeral(interaction, content, view)
+        reply = handlers.download_reply(self.bot, interaction.user.id, payload, handlers.message_key(message))
+        await views.show(interaction, reply)
 
     @per_user_cooldown
     async def add(self, interaction: discord.Interaction, message: discord.Message) -> None:
         payload = handlers.interaction_payload(interaction, message)
-        content, view = handlers.add_to_basket_reply(
+        reply = handlers.add_to_basket_reply(
             self.bot, interaction.user.id, payload, handlers.message_key(message)
         )
-        await send_ephemeral(interaction, content, view)
+        await views.show(interaction, reply)
 
 
 async def setup(bot: ZipBot) -> None:

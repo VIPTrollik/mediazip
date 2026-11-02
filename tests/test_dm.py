@@ -16,6 +16,7 @@ from zipbot.bot import ZipBot
 from zipbot.cogs.dm import HELP, DmCog
 from zipbot.config import Settings
 from zipbot.store import Store
+from zipbot.views import ID_FILES
 
 STATE = cast(Any, SimpleNamespace(http=None))
 TOKEN = re.compile(r"/d#([A-Za-z0-9_-]{43})")
@@ -24,16 +25,17 @@ TOKEN = re.compile(r"/d#([A-Za-z0-9_-]{43})")
 class Channel:
     def __init__(self) -> None:
         self.id = 55
-        self.sent: list[tuple[str, Any]] = []
+        self.sent: list[tuple[str, Any]] = []  # (text, view): a panel's text, or the plain message
         self.fail = False
         self.gate: asyncio.Event | None = None  # if set, send() waits for it
 
-    async def send(self, content: str, view: Any = None) -> Any:
+    async def send(self, content: str | None = None, *, view: Any = None) -> Any:
         if self.gate:
             await self.gate.wait()
         if self.fail:
             raise discord.HTTPException(cast(Any, SimpleNamespace(status=500, reason="x")), "boom")
-        self.sent.append((content, view))
+        assert (content is None) != (view is None)  # a V2 layout never comes with `content`
+        self.sent.append((panel_text(view) if view is not None else content or "", view))
         return SimpleNamespace(delete=AsyncMock())
 
     def typing(self) -> Any:
@@ -42,6 +44,10 @@ class Channel:
             async def __aexit__(self, *exc: object) -> None: ...
 
         return _Typing()
+
+
+def panel_text(view: discord.ui.LayoutView) -> str:
+    return "\n".join(c.content for c in view.walk_children() if isinstance(c, discord.ui.TextDisplay))
 
 
 def attachments(n: int | None = None) -> list[discord.Attachment]:
@@ -86,9 +92,7 @@ async def settle(cog: DmCog) -> None:
 
 def link_record(cog: DmCog, content_view: tuple[str, Any]) -> Any:
     _, view = content_view
-    url = next(
-        getattr(c, "item", c).url for c in view.children if getattr(getattr(c, "item", c), "url", None)
-    )
+    url = next(c.url for c in view.walk_children() if getattr(c, "id", None) == ID_FILES)
     m = TOKEN.search(url)
     assert m
     return cog.bot.store.resolve(m.group(1))

@@ -1,8 +1,8 @@
 """Trigger B: forward or upload files to the bot's DM (PLAN.md §3).
 
 Messages arriving within DM_DEBOUNCE_SEC form one burst; the bot then replies once with a
-link for exactly that burst (one ZIP folder per message). "Add to basket" on the reply puts
-the burst into the user's basket if they want to combine it with more.
+link panel for exactly that burst (one ZIP folder per message). "Add to basket" on the panel
+puts the burst into the user's basket if they want to combine it with more.
 """
 
 from __future__ import annotations
@@ -79,12 +79,12 @@ class DmCog(commands.Cog):
         # cancelling this one halfway through sending.
         if self.pending.get(user_id) is burst:
             del self.pending[user_id]
-        content, view = handlers.burst_reply(self.bot, user_id, burst.items, burst.messages)
+        reply = handlers.burst_reply(self.bot, user_id, burst.items, burst.messages)
         try:
-            if view is None:
-                await burst.channel.send(content)
+            if isinstance(reply, str):
+                await burst.channel.send(reply)
             else:
-                await burst.channel.send(content, view=view)
+                await burst.channel.send(view=reply)
         except discord.HTTPException as exc:
             log.warning("DM reply failed: %s", type(exc).__name__)
 
