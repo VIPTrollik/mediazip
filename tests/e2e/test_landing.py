@@ -99,6 +99,8 @@ def test_landing_structure_and_keyboard(page: Page, base_url: str) -> None:
     assert page.locator(".steps > li").count() == 3
     assert page.get_by_role("img", name="A message with three attachments").is_visible()
     assert page.get_by_role("navigation", name="Site").is_visible()
+    assert page.get_by_role("contentinfo").count() == 1  # footer is a sibling of <main>, not inside it
+    assert page.get_by_text("Not affiliated with or endorsed by Discord.").count() == 2  # hero + footer
     # The first Tab stop is the primary call to action, with a visible focus ring.
     # WebKit, like Safari's default setting, skips links on Tab, so there it is focused directly.
     browser = page.context.browser
@@ -155,6 +157,9 @@ def test_landing_fits_viewport(
     page.emulate_media(color_scheme=scheme)
     page.wait_for_load_state("networkidle")
     assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), "horizontal scroll"
+    # the footer sits in main's content column
+    edges = "e => { const r = e.getBoundingClientRect(); return [Math.round(r.left), Math.round(r.right)]; }"
+    assert page.locator("body > footer").evaluate(edges) == page.locator(".steps").evaluate(edges)
     bg = page.evaluate("getComputedStyle(document.body).backgroundColor")
     assert bg == ("rgb(30, 31, 34)" if scheme == "dark" else "rgb(246, 247, 249)")
     assert page.evaluate("window.__csp") == []

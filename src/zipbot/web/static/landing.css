@@ -1,4 +1,4 @@
-/* Landing page (index.html only), loaded after style.css: layout + the inline illustration.
+/* Landing page (index.html, plus the /install 503 page for the footer), loaded after style.css.
    Uses the theme's tokens and components; no new colours except the illustration's own. */
 
 /* ---- Hero ----------------------------------------------------------------------- */
@@ -7,7 +7,10 @@
   padding: var(--space-4) 0 var(--space-6);
 }
 @media (min-width: 840px) {
-  .hero { grid-template-columns: minmax(0, 1fr) minmax(0, 420px); padding-top: var(--space-5); }
+  .hero {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 420px);
+    padding-top: var(--space-5); padding-bottom: var(--space-5);
+  }
 }
 .hero__text > * { margin: 0; }
 .hero__text > * + * { margin-top: var(--space-4); }
@@ -16,6 +19,7 @@
 .hero .actions { margin-top: var(--space-5); }
 .hero__hint { font-size: var(--text-sm); color: var(--muted); max-width: 52ch; }
 .hero__hint b { color: var(--fg); font-weight: 600; }
+.hero__text > .hero__disclaimer { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--muted); }
 .hero__art { margin: 0; }
 .hero__art svg { display: block; width: 100%; height: auto; }
 
@@ -38,7 +42,12 @@
 
 .landing__note { margin-top: var(--space-5); }
 .landing__note a { color: var(--link); }
-.landing .site-footer { margin-top: var(--space-6); } /* keeps the page to one 1280×800 screen */
+
+/* ---- Footer outside <main> (its own contentinfo landmark), in main's content column ---- */
+body > .site-footer {
+  margin: 0 max(var(--space-4), (100% - var(--content)) / 2 + var(--space-4)) var(--space-7);
+}
+main.landing { padding-bottom: var(--space-6); } /* keeps the page to one 1280×800 screen */
 
 /* ---- Illustration (inline SVG in index.html) ------------------------------------ */
 .art {
