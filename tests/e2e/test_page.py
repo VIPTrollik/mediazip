@@ -43,10 +43,14 @@ NO_PICKERS = (
     "for (const k of ['showDirectoryPicker', 'showSaveFilePicker']) {"
     " delete Window.prototype[k]; delete window[k]; }"
 )
-# A fake folder for showDirectoryPicker: `tree` is nested objects (folders) and strings (files).
-# getFileHandle refuses the names Chrome refuses, so the page has to rename them first.
+# A fake folder for showDirectoryPicker, modelled on Chrome: `tree` is nested objects (folders)
+# and strings (files); getFileHandle refuses the names Chrome refuses and creates an empty file
+# as soon as it's called with create; a writable only replaces the file on close, and an error
+# leaves it as it was. opts: breakWrite (a substring of names whose writes fail), deny (every
+# lookup throws NotAllowedError, as after the permission was revoked).
 FAKE_FS = """
-window.__fs = { calls: [], tree: %(tree)s, written: [] };
+window.__fs = { calls: [], tree: %(tree)s, written: [], removed: [], probes: 0 };
+const OPTS = %(opts)s;
 const notFound = () => new DOMException("not found", "NotFoundError");
 function fakeDir(path, node) {
   return {
@@ -57,6 +61,8 @@ function fakeDir(path, node) {
       return fakeDir(path + name + "/", node[name]);
     },
     async getFileHandle(name, opts) {
+      if (!opts?.create) window.__fs.probes++;
+      if (OPTS.deny) throw new DOMException("denied", "NotAllowedError");
       if (/\\.(lnk|url|scf|local|ini|cfg|manifest|dll)$|\\.$/i.test(name)) {
         throw new TypeError("Name is not allowed.");
       }
@@ -67,7 +73,12 @@ function fakeDir(path, node) {
         async createWritable() {
           const parts = [];
           return new WritableStream({
-            write(chunk) { parts.push(chunk); },
+            write(chunk) {
+              if (OPTS.breakWrite && name.includes(OPTS.breakWrite)) {
+                throw new DOMException("disk full", "QuotaExceededError");
+              }
+              parts.push(chunk);
+            },
             async close() {
               node[name] = await new Blob(parts).text();
               window.__fs.written.push(path + name);
@@ -75,6 +86,11 @@ function fakeDir(path, node) {
           });
         },
       };
+    },
+    async removeEntry(name) {
+      if (!(name in node)) throw notFound();
+      delete node[name];
+      window.__fs.removed.push(path + name);
     },
   };
 }
@@ -85,32 +101,47 @@ window.showDirectoryPicker = async (opts) => {
   return fakeDir("", window.__fs.tree);
 };
 """
+# showSaveFilePicker: the picked file exists (empty) once the picker resolves, like in Chrome.
+# opts: failWrite (every write fails).
 FAKE_SAVE_PICKER = """
-window.__save = { calls: [], bytes: null };
+window.__save = { calls: [], bytes: null, aborted: false, removed: false };
+const SAVE = %(opts)s;
 window.showSaveFilePicker = async (opts) => {
   window.__save.calls.push(opts);
   return {
     async createWritable() {
       const parts = [];
       return new WritableStream({
-        write(chunk) { parts.push(chunk); },
+        write(chunk) {
+          if (SAVE.failWrite) throw new DOMException("disk full", "QuotaExceededError");
+          parts.push(chunk);
+        },
         async close() {
           window.__save.bytes = Array.from(new Uint8Array(await new Blob(parts).arrayBuffer()));
         },
+        abort() { window.__save.aborted = true; },
       });
     },
+    async remove() { window.__save.removed = true; },
   };
 };
 """
+# fail: null, an error name (every call fails) or {"once": name} (only the first call fails)
 FAKE_SHARE = """
 window.__shared = [];
+let shareFail = %(fail)s;
 navigator.canShare = () => true;
 navigator.share = async (d) => {
-  const fail = %(fail)s;
-  if (fail) throw new DOMException("Permission denied", fail);
+  if (typeof shareFail === "string") throw new DOMException("Permission denied", shareFail);
+  if (shareFail?.once) {
+    const name = shareFail.once;
+    shareFail = null;
+    throw new DOMException("share failed", name);
+  }
   window.__shared.push(d.files.map((f) => f.name + ":" + f.type));
 };
 """
+NO_SHARE = "delete Navigator.prototype.share; delete Navigator.prototype.canShare;"
 
 
 @pytest.fixture(scope="module")
@@ -310,7 +341,7 @@ def test_zip_of_any_file_type(page: Page, server: tuple[str, Store], cdn: Cdn) -
 def test_zip_streams_into_save_file_picker(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
     base, store = server
     token = make_link(store, cdn, [("a.jpg", 0), ("b.pdf", 1)])
-    page.add_init_script(FAKE_SAVE_PICKER)
+    _fake_save_picker(page)
     downloads = collect_downloads(page)
     page.goto(f"{base}/d#{token}")
     wait_state(page, "ready")
@@ -394,8 +425,13 @@ def test_save_each_file(page: Page, server: tuple[str, Store], cdn: Cdn) -> None
     assert "Downloaded 3 files" in status(page)
 
 
-def _fake_fs(page: Page, tree: dict[str, Any] | None = None, fail: str | None = None) -> None:
-    page.add_init_script(FAKE_FS % {"tree": json.dumps(tree or {}), "fail": json.dumps(fail)})
+def _fake_fs(page: Page, tree: dict[str, Any] | None = None, fail: str | None = None, **opts: Any) -> None:
+    fake = FAKE_FS % {"tree": json.dumps(tree or {}), "fail": json.dumps(fail), "opts": json.dumps(opts)}
+    page.add_init_script(fake)
+
+
+def _fake_save_picker(page: Page, **opts: Any) -> None:
+    page.add_init_script(FAKE_SAVE_PICKER % {"opts": json.dumps(opts)})
 
 
 def test_download_all_into_picked_folder(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
@@ -489,6 +525,104 @@ def test_download_all_on_phone_uses_downloads(phone: Page, server: tuple[str, St
     wait_state(phone, "done")
     wait_downloads(phone, downloads, 2)
     assert len(downloads) == 2 and phone.evaluate("window.__fs.calls") == []
+
+
+def test_folder_write_failure_leaves_no_empty_file(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("good.jpg", 0), ("bad.jpg", 0)])
+    _fake_fs(page, breakWrite="bad")
+    page.goto(f"{base}/d#{token}")
+    wait_state(page, "ready")
+    page.click("#btn-files")
+    wait_state(page, "done")
+    assert page.evaluate("window.__fs.tree") == {"good.jpg": "good.jpg"}  # the empty bad.jpg is gone
+    assert page.evaluate("window.__fs.removed") == ["bad.jpg"]
+    assert "1 file couldn't be saved" in status(page)
+    assert page.text_content("#item-1 .tile__status") == "Not saved"
+
+
+def test_folder_permission_revoked_fails_fast(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("a.jpg", 0), ("b.jpg", 0)])
+    _fake_fs(page, deny=True)
+    page.goto(f"{base}/d#{token}")
+    wait_state(page, "ready")
+    page.click("#btn-files")
+    wait_state(page, "done")
+    assert page.evaluate("window.__fs.probes") == 2  # one lookup per file, not 999 retries
+    assert "None of the files could be downloaded" in status(page)
+
+
+def test_zip_picker_with_nothing_to_zip(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("gone.jpg", 0)])
+    cdn.missing.add("f0-gone.jpg")
+    _fake_save_picker(page)
+    page.goto(f"{base}/d#{token}")
+    wait_state(page, "ready")
+    page.click("#btn-zip")
+    wait_state(page, "done")
+    assert page.evaluate("window.__save.bytes") is None  # never closed: no empty ZIP
+    assert page.evaluate("window.__save.aborted && window.__save.removed")
+    assert "None of the files could be downloaded" in status(page)
+
+
+def test_zip_picker_write_error(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("a.jpg", 0)])
+    _fake_save_picker(page, failWrite=True)
+    page.goto(f"{base}/d#{token}")
+    wait_state(page, "ready")
+    page.click("#btn-zip")
+    wait_state(page, "done")
+    assert page.evaluate("window.__save.bytes") is None and page.evaluate("window.__save.removed")
+    text = status(page)
+    assert "couldn't be finished" in text and "Nothing was saved" in text, text
+
+
+@pytest.mark.parametrize(
+    ("mime", "risky"),
+    [("application/x-msdownload", True), ("text/html", True), (None, True), ("image/png", False)],
+)
+def test_auto_start_checks_type_of_extensionless_files(
+    page: Page, server: tuple[str, Store], cdn: Cdn, mime: str | None, risky: bool
+) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("setup", 0)], ctype=mime)
+    downloads = collect_downloads(page)
+    page.goto(f"{base}/d#{token}.files")
+    if risky:
+        wait_state(page, "ready")
+        page.wait_for_timeout(500)
+        assert downloads == [] and "setup" in status(page)
+        page.click("#btn-files")
+    wait_state(page, "done")
+    wait_downloads(page, downloads, 1)
+    # saved as octet-stream: the browser must not add .exe/.html from the CDN's type
+    assert [d.suggested_filename for d in downloads] == ["setup"]
+
+
+def test_auto_start_blocked_for_more_risky_types(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("a.jpg", 0), ("app.appref-ms", 0), ("tool.py", 0)], ctype=None)
+    downloads = collect_downloads(page)
+    page.goto(f"{base}/d#{token}.files")
+    wait_state(page, "ready")
+    page.wait_for_timeout(500)
+    text = status(page)
+    assert downloads == [] and "app.appref-ms" in text and "tool.py" in text, text
+
+
+def test_auto_start_sees_through_disguised_names(page: Page, server: tuple[str, Store]) -> None:
+    # Bypasses the server sanitizer: "evil.exe." and a zero-width space are still .exe files.
+    items = [_raw_item("evil.exe."), _raw_item("tricky.e​xe"), _raw_item("fine.jpg")]
+    _stub_resolve(page, {"expires_at": int(time.time()) + 600, "items": items})
+    downloads = collect_downloads(page)
+    page.goto(f"{server[0]}/d#{'y' * 43}.files")
+    wait_state(page, "ready")
+    page.wait_for_timeout(500)
+    text = status(page)
+    assert downloads == [] and "evil.exe." in text and "tricky" in text, text
 
 
 # --- rendering -------------------------------------------------------------------
@@ -609,7 +743,9 @@ def test_expired_link_hides_actions(page: Page, server: tuple[str, Store]) -> No
     _stub_resolve(page, {"expires_at": int(time.time()) + 2, "items": [_raw_item("a.jpg")]})
     page.goto(f"{server[0]}/d#{'y' * 43}")
     wait_state(page, "ready")
+    page.focus("#btn-files")
     wait_state(page, "error", timeout=6000)
+    assert page.evaluate("document.activeElement.id") == "error"  # focus isn't lost with the buttons
     assert "expired" in (page.text_content("#error-title") or "")
     assert "Download attachments" in (page.text_content("#error-text") or "")  # what to do next
     assert page.is_hidden("#actions")
@@ -648,14 +784,41 @@ def test_share_button(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
     token = make_link(store, cdn, [("p.jpg", 0), ("q.jpg", 0)], ctype="image/jpeg")
     page.goto(f"{base}/d#{token}")
     wait_state(page, "ready")
-    hidden_without_api = page.evaluate("!navigator.canShare") and page.is_hidden("#btn-share")
+    # without the fake: visible exactly when this engine can share a PNG file
+    supported = page.evaluate(
+        "!!(navigator.share && navigator.canShare"
+        " && navigator.canShare({files: [new File([''], 'a.png', {type: 'image/png'})]}))"
+    )
+    assert page.is_visible("#btn-share") == supported
+    page.add_init_script(NO_SHARE)
+    page.reload()
+    wait_state(page, "ready")
+    assert page.is_hidden("#btn-share")  # no Web Share API: no button
     page.add_init_script(FAKE_SHARE % {"fail": "null"})
     page.reload()
     wait_state(page, "ready")
     assert page.is_visible("#btn-share")
     share_until_done(page)
     assert page.evaluate("window.__shared") == [["p.jpg:image/jpeg", "q.jpg:image/jpeg"]]
-    assert hidden_without_api or page.evaluate("!!navigator.canShare")
+
+
+def test_share_retry_after_failure_counts_once(phone: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    token = make_link(store, cdn, [("p.jpg", 0), ("gone.jpg", 0), ("q.jpg", 0)])
+    cdn.missing.add("f1-gone.jpg")
+    phone.add_init_script(FAKE_SHARE % {"fail": '{"once": "DataError"}'})
+    phone.goto(f"{base}/d#{token}")
+    wait_state(phone, "ready")
+    phone.click("#btn-share")
+    for _ in range(3):  # the first real share() attempt fails unexpectedly
+        if wait_state(phone, "error", "ready") == "error":
+            break
+        phone.click("#btn-share")  # "tap Share again"
+    assert phone.is_visible("#actions")  # a failed attempt leaves the buttons usable
+    share_until_done(phone)
+    assert phone.evaluate("window.__shared") == [["p.jpg:image/jpeg", "q.jpg:image/jpeg"]]
+    text = status(phone)
+    assert "Shared 2 of 3 files" in text and "1 file is no longer available" in text, text
 
 
 def test_share_in_batches_skips_unshareable(phone: Page, server: tuple[str, Store], cdn: Cdn) -> None:
@@ -697,6 +860,27 @@ def test_share_batches_by_size(phone: Page, server: tuple[str, Store], cdn: Cdn)
         [f"big{n}.mp4:video/mp4"] for n in range(3)
     ]  # <= 50 MiB each
     assert "huge.mp4" in status(phone)
+
+
+def test_share_skips_files_too_big_by_content_length(
+    phone: Page, server: tuple[str, Store], cdn: Cdn
+) -> None:
+    # No size from Discord: the Content-Length tells the page not to load 51 MiB for sharing.
+    cdn.files["big.mp4"] = b"\0" * (51 * 1024 * 1024)
+    cdn.files["small.mp4"] = b"x"
+    items = [
+        _raw_item(
+            n, f"https://cdn.discordapp.com/attachments/1/1/{n}", kind="video", mime="video/mp4", size=None
+        )
+        for n in ("big.mp4", "small.mp4")
+    ]
+    _stub_resolve(phone, {"expires_at": int(time.time()) + 600, "items": items})
+    phone.add_init_script(FAKE_SHARE % {"fail": "null"})
+    phone.goto(f"{server[0]}/d#{'y' * 43}")
+    wait_state(phone, "ready")
+    share_until_done(phone)
+    assert phone.evaluate("window.__shared") == [["small.mp4:video/mp4"]]
+    assert "big.mp4" in status(phone)
 
 
 def test_share_refused_is_explained(phone: Page, server: tuple[str, Store], cdn: Cdn) -> None:
