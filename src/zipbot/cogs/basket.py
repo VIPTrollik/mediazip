@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 class BasketCog(
-    commands.GroupCog, group_name="basket", group_description="Collect attachments from several messages"
+    commands.GroupCog, group_name="basket", group_description="Collect media from several messages"
 ):
     def __init__(self, bot: ZipBot) -> None:
         self.bot = bot

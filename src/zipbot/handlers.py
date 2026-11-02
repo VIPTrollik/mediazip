@@ -19,9 +19,8 @@ from zipbot.views import (
     basket_panel,
     layout,
     link_panel,
+    nothing_to_download,
 )
-
-NO_ATTACHMENTS = "This message has no attachments to download."
 
 
 def message_key(message: discord.Message) -> str:
@@ -64,7 +63,7 @@ def link_reply(
 def download_reply(state: AppState, user_id: int, payload: Mapping[str, Any], key: str) -> Reply:
     items = extract(payload, kinds=_kinds(state))
     if not items:
-        return NO_ATTACHMENTS
+        return nothing_to_download(state.settings, "This")
     return link_reply(state, user_id, items, key)
 
 
@@ -79,7 +78,7 @@ def burst_reply(
 def add_to_basket_reply(state: AppState, user_id: int, payload: Mapping[str, Any], key: str) -> Reply:
     items = extract(payload, kinds=_kinds(state))
     result, _ = state.store.add_to_basket(user_id, key, items)
-    return basket_panel(state, user_id, basket_note(result, len(items)))
+    return basket_panel(state, user_id, basket_note(state.settings, result, len(items)))
 
 
 def basket_show_reply(state: AppState, user_id: int) -> Reply:

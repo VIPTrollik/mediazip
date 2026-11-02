@@ -66,6 +66,14 @@ async def test_pages_and_static(client: Any) -> None:
     assert (await client.get("/static/../app.py")).status == 404
 
 
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms"])
+async def test_copy_is_about_images_and_videos(client: Any, path: str) -> None:
+    html = await (await client.get(path)).text()
+    for old in ("any file type", "PDF", "archives", "Download attachments", "files of any type"):
+        assert old not in html, old
+    assert "Download media" in html or path == "/terms"
+
+
 @pytest.mark.parametrize(
     ("path", "ctype"),
     [

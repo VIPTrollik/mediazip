@@ -1,14 +1,14 @@
 # Discord media downloader
 
-Save every attachment of a Discord message (or a few messages) at once — images, videos, and
-any other file — as a ZIP or straight to your phone — from inside the Discord app.
+Save every image and video of a Discord message (or a few messages) at once — as a ZIP or
+straight to your phone — from inside the Discord app.
 
-- **Right-click / long-press a message → Apps → Download attachments.** The reply (only you see it)
+- **Right-click / long-press a message → Apps → Download media.** The reply (only you see it)
   is one panel: thumbnails of the files and one-tap buttons **⬇️ Download all** and
   **🗜️ Download ZIP**, plus **Add to basket** and **Revoke**. A new reply replaces your previous one.
 - **Add to ZIP basket** on several messages (or **Add to basket** on a reply): the panel's
   **🧺 Basket ZIP** button gives one ZIP with a folder per message (also `/basket show`).
-- **Forward messages to the bot's DM** (or upload files there): one reply with a link for all
+- **Forward messages to the bot's DM** (or upload photos and videos there): one reply with a link for all
   of them.
 
 The server never touches the files. The bot captures Discord's signed CDN URLs, and your
@@ -79,9 +79,9 @@ Then point your reverse proxy at `http://127.0.0.1:8080` and check
 Discord within a minute; restart the Discord app if they don't.
 
 Update: `git pull && docker compose up -d --build`. Links and baskets are lost on restart
-(they are short-lived by design). When a command changed (e.g. "Download media" became
-"Download attachments" in v0.1), the bot re-syncs on start; restart the Discord app if the
-old name still shows.
+(they are short-lived by design). When a command changed (e.g. "Download attachments" is
+"Download media" again since media became the scope), the bot re-syncs on start; restart the
+Discord app if the old name still shows.
 
 ### If the token leaks
 

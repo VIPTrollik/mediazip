@@ -159,7 +159,7 @@ def extract(
     """Media of one message, in order: attachments, forwarded attachments, embeds.
 
     `kinds` limits to e.g. {"image", "video"} (attachments of any other type are "file", so
-    they are left out); None means every attachment (MEDIA_TYPES=all, the default).
+    they are left out); None means every attachment (MEDIA_TYPES=all, an opt-in).
     """
     wanted = None if kinds is None else frozenset(kinds)
     layers = list(_layers(message))

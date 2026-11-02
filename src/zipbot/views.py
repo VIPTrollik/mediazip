@@ -429,13 +429,24 @@ BASKET_RESULT_TEXT = {
     AddResult.DUPLICATE: "That message is already in your basket.",
     AddResult.FULL_MESSAGES: "Your basket is full (message limit). Download or clear it first.",
     AddResult.FULL_FILES: "That would exceed the file limit for one link. Download or clear it first.",
-    AddResult.EMPTY: "That message has no attachments to download.",
 }
+MEDIA_WORDS = {"image": "images", "video": "videos", "audio": "audio files"}
 
 
-def basket_note(result: AddResult, added: int) -> str:
+def nothing_to_download(settings: Settings, this: str = "That") -> str:
+    """The empty-message notice, worded after MEDIA_TYPES ("no images or videos" by default)."""
+    if settings.all_media:
+        return f"{this} message has nothing to download."
+    words = [w for kind, w in MEDIA_WORDS.items() if kind in settings.media_types]
+    listed = " or ".join(filter(None, [", ".join(words[:-1]), words[-1]]))
+    return f"{this} message has no {listed}."
+
+
+def basket_note(settings: Settings, result: AddResult, added: int) -> str:
     if result is AddResult.ADDED:
         return f"✓ Added {plural(added, 'file')} to your basket."
+    if result is AddResult.EMPTY:
+        return nothing_to_download(settings)
     return BASKET_RESULT_TEXT[result]
 
 
@@ -497,7 +508,7 @@ class AddLinkToBasketButton(
             await update(interaction, LINK_EXPIRED)
             return
         result, _ = state.store.add_to_basket(user_id, record.message_key or record.link_id, record.items)
-        note = basket_note(result, len(record.items))
+        note = basket_note(state.settings, result, len(record.items))
         link = panel_link(interaction)
         reply = link_panel(state, user_id, link, note=note) if link else basket_panel(state, user_id, note)
         await update(interaction, reply)

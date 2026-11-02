@@ -69,7 +69,7 @@ main.landing { padding-bottom: var(--space-6); } /* keeps the page to one 1280×
 .art-pill { fill: var(--surface-2); }
 .art-sun { fill: var(--art-sun); }
 .art-hill { fill: var(--art-hill); }
-.art-ink { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.art-gif { fill: var(--muted); font-size: 15px; font-weight: 700; }
 .art-play-bg { fill: var(--overlay); }
 .art-play { fill: var(--overlay-fg); }
 .art-btn { fill: var(--accent); }

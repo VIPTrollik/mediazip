@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta name="description" content="Download every attachment of a Discord message at once, as a ZIP or straight to your device.">
+<meta name="description" content="Download every image and video of a Discord message at once, as a ZIP or straight to your device.">
 <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1e1f22" media="(prefers-color-scheme: dark)">
 <title>Discord media downloader</title>
@@ -16,8 +16,8 @@
   <section class="hero" aria-labelledby="title">
     <div class="hero__text">
       <h1 id="title">Discord media downloader</h1>
-      <p class="hero__lead">Download every attachment of a Discord message at once — as a ZIP or straight to your device.
-        Photos, videos, PDFs, archives: any file type.</p>
+      <p class="hero__lead">Download every image and video of a Discord message at once — as a ZIP or straight to your device.
+        Photos, GIFs and video clips, in one go.</p>
       <div class="actions">
         <a class="btn btn--primary btn--lg" href="/install">
           <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-plus"/></svg>Add to Discord
@@ -31,10 +31,10 @@
 
     <figure class="hero__art">
       <svg class="art" viewBox="0 0 440 250" role="img" aria-labelledby="art-title">
-        <title id="art-title">A message with three attachments, the bot's private reply with Download all and
-          Download ZIP buttons, and the files arriving on a phone.</title>
+        <title id="art-title">A message with a photo, a GIF and a video, the bot's private reply with Download all and
+          Download ZIP buttons, and the three arriving on a phone.</title>
         <rect class="art-panel" x="1" y="1" width="298" height="247" rx="14"/>
-        <!-- the message: avatar, name, text, three attachments -->
+        <!-- the message: avatar, name, text, a photo, a GIF and a video -->
         <circle class="art-avatar" cx="34" cy="34" r="14"/>
         <rect class="art-bar art-bar--strong" x="58" y="22" width="70" height="8" rx="4"/>
         <rect class="art-bar" x="134" y="23" width="30" height="6" rx="3"/>
@@ -43,7 +43,7 @@
         <circle class="art-sun" cx="105" cy="73" r="6"/>
         <path class="art-hill" d="M58 112 L80 88 L94 102 L104 93 L122 112 V112 Q122 120 114 120 H66 Q58 120 58 112 Z"/>
         <rect class="art-tile" x="130" y="56" width="64" height="64" rx="8"/>
-        <path class="art-ink" d="M154 70 h11 l7 7 v23 a2 2 0 0 1 -2 2 h-16 a2 2 0 0 1 -2 -2 v-28 a2 2 0 0 1 2 -2 z M165 70 v7 h7 M157 86 h10 M157 92 h10"/>
+        <text class="art-gif" x="162" y="93.5" text-anchor="middle">GIF</text>
         <rect class="art-tile" x="202" y="56" width="64" height="64" rx="8"/>
         <circle class="art-play-bg" cx="234" cy="88" r="15"/>
         <path class="art-play" d="M229 80 L241 88 L229 96 Z"/>
@@ -87,7 +87,7 @@
       <li class="card step">
         <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-file"/></svg></span>
         <h3>Pick a message</h3>
-        <p>Right-click or long-press it, then choose <b>Apps</b> → <b>Download attachments</b>.</p>
+        <p>Right-click or long-press it, then choose <b>Apps</b> → <b>Download media</b>.</p>
       </li>
       <li class="card step">
         <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-download"/></svg></span>
@@ -97,14 +97,14 @@
       <li class="card step">
         <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-share"/></svg></span>
         <h3>Or forward it</h3>
-        <p>Forward messages to the bot in a DM, or upload files there, and get one link for all of them.</p>
+        <p>Forward messages to the bot in a DM, or upload photos and videos there, and get one link for all of them.</p>
       </li>
     </ol>
   </section>
 
   <div class="card card--flat note landing__note">
     <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-lock"/></svg>
-    <p>Files go straight from Discord to your device. This server never stores them, keeps no file names in its logs,
+    <p>Your images and videos go straight from Discord to your device. This server never stores them, keeps no file names in its logs,
       and download links are short-lived. <a href="/privacy">How your data is handled</a></p>
   </div>
 </main>

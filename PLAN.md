@@ -40,8 +40,8 @@ From the Discord docs:
 
 ## 3. UX
 
-### A. Context menu — "Download attachments" (v0.1: one live panel, "Design A" at G-UX)
-Right-click / long-press message → Apps → **Download attachments**.
+### A. Context menu — "Download media" (v0.1: one live panel, "Design A" at G-UX)
+Right-click / long-press message → Apps → **Download media**.
 Ephemeral reply: **one Components V2 panel** (`views.py`, a `LayoutView` with one Container):
 ```
 📦 12 files · 48.3 MB · link expires in 59 min   (+ "only the first N of M" note)
@@ -56,7 +56,8 @@ Ephemeral reply: **one Components V2 panel** (`views.py`, a `LayoutView` with on
 - **One live panel per user:** a new panel deletes the user's previous one through the interaction token that last touched it (if < 14 min old; tokens live 15). Buttons edit the panel they sit on and refresh its token. Only the live panel takes a click's token, and replies are ordered by a ticket taken before their send. In memory only: after a restart old panels stay until dismissed.
 - **Basket ZIP** is a pre-minted basket link; each user has one live basket link. A new panel re-mints it (only token hashes are stored), and an in-place edit keeps it while the basket is unchanged.
 - **Revoke** says what it does: the link can't be opened again; pages already open keep working until Discord's file links expire.
-- Notices (no attachments, errors, cooldowns) are plain ephemeral text and leave the live panel alone. No attachments → "This message has no attachments to download."
+- Notices (no media, errors, cooldowns) are plain ephemeral text and leave the live panel alone. No media → "This message has no images or videos." (worded after `MEDIA_TYPES`; "nothing to download" with `all`).
+- Scope (decided after a live test): images and videos. Discord's CDN sends no CORS headers for documents (a PDF on `cdn.discordapp.com`: 200 without `Access-Control-Allow-Origin`; `media.discordapp.net`: 415), so the page can't fetch them; `MEDIA_TYPES=all` stays an opt-in.
 
 ### A2. Context menu — "Add to ZIP basket"
 The basket's own panel replaces the previous one: "✓ Added N files to your basket." (or duplicate/full), "🧺 Basket: N files from M messages · size · expiry", thumbnails, `[Download all ↗]` `[Basket ZIP ↗]` `[Clear basket]`.

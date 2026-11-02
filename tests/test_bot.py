@@ -38,6 +38,7 @@ from zipbot.views import (
 )
 
 ATTACHMENTS = "interaction_context_menu_attachments.json"
+NO_MEDIA = "This message has no images or videos."
 TOKEN_IN_URL = re.compile(r"/d#([A-Za-z0-9_-]{43})(\.files|\.zip)?$")
 
 
@@ -152,11 +153,11 @@ async def test_commands_registered_for_every_context(settings: Settings) -> None
     for ext in EXTENSIONS:
         await bot.load_extension(ext)
     payloads = {c.name: c.to_dict(bot.tree) for c in bot.tree.get_commands()}
-    assert set(payloads) == {"Download attachments", "Add to ZIP basket", "basket"}
+    assert set(payloads) == {"Download media", "Add to ZIP basket", "basket"}
     for p in payloads.values():
         assert sorted(p["integration_types"]) == [0, 1]
         assert sorted(p["contexts"]) == [0, 1, 2]
-    assert payloads["Download attachments"]["type"] == 3
+    assert payloads["Download media"]["type"] == 3
     assert {o["name"] for o in payloads["basket"]["options"]} == {"show", "link", "clear"}
     for ext in EXTENSIONS:
         await bot.unload_extension(ext)
@@ -193,9 +194,26 @@ async def test_download_reply_panel(state: Any) -> None:
     assert not any("📎" in t for t in texts(view))  # every file is in the gallery
 
 
-def test_download_reply_no_attachments(state: Any) -> None:
+def test_download_reply_no_media(state: Any) -> None:
     payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
-    assert handlers.download_reply(state, 7, payload, "k") == handlers.NO_ATTACHMENTS
+    assert handlers.download_reply(state, 7, payload, "k") == "This message has no images or videos."
+
+
+@pytest.mark.parametrize(
+    ("media_types", "notice"),
+    [
+        ({"image", "video"}, "That message has no images or videos."),
+        ({"video"}, "That message has no videos."),
+        ({"image", "video", "audio"}, "That message has no images, videos or audio files."),
+        ({"all"}, "That message has nothing to download."),
+        ({"all", "image"}, "That message has nothing to download."),
+    ],
+)
+def test_nothing_to_download_follows_media_types(
+    settings: Settings, media_types: set[str], notice: str
+) -> None:
+    s = settings.model_copy(update={"media_types": frozenset(media_types)})
+    assert views.nothing_to_download(s) == notice
 
 
 def test_download_reply_respects_media_types(state: Any) -> None:
@@ -216,7 +234,7 @@ def test_download_reply_images_and_videos_by_default(state: Any) -> None:
     view = panel(handlers.download_reply(state, 7, fixture("message_any_files.json"), "k"))
     assert texts(view)[0].startswith("📦 **1 file** · ")  # just photo.png
     no_media = {"attachments": fixture("message_any_files.json")["attachments"][:5]}
-    assert handlers.download_reply(state, 7, no_media, "k") == handlers.NO_ATTACHMENTS
+    assert handlers.download_reply(state, 7, no_media, "k") == "This message has no images or videos."
 
 
 def test_download_reply_truncates(state: Any) -> None:
@@ -331,10 +349,10 @@ def test_basket_handlers(state: Any) -> None:
     assert handlers.basket_show_reply(state, 7) == BASKET_EMPTY
 
 
-def test_add_no_attachments_to_basket(state: Any) -> None:
+def test_add_no_media_to_basket(state: Any) -> None:
     payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
     reply = handlers.add_to_basket_reply(state, 7, payload, "k")
-    assert reply == f"That message has no attachments to download.\n{BASKET_EMPTY}"
+    assert reply == f"That message has no images or videos.\n{BASKET_EMPTY}"
 
 
 def test_basket_link_error(state: Any) -> None:
@@ -655,9 +673,9 @@ async def test_notices_leave_the_live_panel_alone(state: Any) -> None:
     live = interaction(state)
     await views.show(live, panel(link_of(state)[0]))
     notice = interaction(state)
-    await views.show(notice, handlers.NO_ATTACHMENTS)
+    await views.show(notice, NO_MEDIA)
     await drain()
-    notice.response.send_message.assert_awaited_once_with(handlers.NO_ATTACHMENTS, ephemeral=True)
+    notice.response.send_message.assert_awaited_once_with(NO_MEDIA, ephemeral=True)
     live.delete_original_response.assert_not_awaited()
 
 
@@ -741,7 +759,8 @@ async def test_error_handler(settings: Settings, state: Any, done: bool) -> None
     [
         None,
         (0, "description", "old text"),
-        (1, "name", "Download media"),  # v0.0.0 name: Discord keeps it until we re-sync
+        (1, "name", "Download attachments"),  # the any-file name: Discord keeps it until we re-sync
+        (0, "description", "Collect attachments from several messages"),  # ditto
     ],
 )
 async def test_sync_only_when_commands_changed(

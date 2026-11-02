@@ -97,7 +97,12 @@ def test_landing_structure_and_keyboard(page: Page, base_url: str) -> None:
     assert page.locator("h1").count() == 1
     assert page.get_by_role("heading", level=2, name="How it works").is_visible()
     assert page.locator(".steps > li").count() == 3
-    assert page.get_by_role("img", name="A message with three attachments").is_visible()
+    assert page.get_by_role("img", name="A message with a photo, a GIF and a video").is_visible()
+    lead = page.locator(".hero__lead")
+    assert "Download every image and video of a Discord message" in lead.inner_text()
+    main_text = page.locator("main").inner_text()
+    assert "PDF" not in main_text and "any file type" not in main_text  # media only: no CORS for documents
+    assert page.get_by_text("Apps → Download media").is_visible()
     assert page.get_by_role("navigation", name="Site").is_visible()
     assert page.get_by_role("contentinfo").count() == 1  # footer is a sibling of <main>, not inside it
     assert page.get_by_text("Not affiliated with or endorsed by Discord.").count() == 2  # hero + footer
