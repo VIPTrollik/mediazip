@@ -13,7 +13,8 @@ import pytest
 from helpers import EX, fixture, resolved_message
 from zipbot.__main__ import configure_logging
 from zipbot.bot import ZipBot
-from zipbot.cogs.dm import HELP, DmCog
+from zipbot.cogs import dm as dm_mod
+from zipbot.cogs.dm import HELP, HELP_COOLDOWN_SEC, DmCog
 from zipbot.config import Settings
 from zipbot.store import Store
 from zipbot.views import ID_FILES
@@ -197,3 +198,69 @@ def test_library_loggers_never_debug() -> None:
         assert logging.getLogger("aiohttp.access").getEffectiveLevel() == logging.INFO
     finally:
         root.setLevel(old)
+
+
+async def test_full_burst_is_sent_at_once(cog: DmCog) -> None:
+    cog.bot.settings = cog.bot.settings.model_copy(update={"max_files_per_link": 3, "dm_debounce_sec": 60})
+    cog.bot.store.max_files_per_link = 3
+    ch = Channel()
+    await cog.on_message(dm(ch, 1, files=attachments(2)))
+    await cog.on_message(dm(ch, 2, files=attachments(2)))  # fills the burst: no 60 s wait
+    assert 7 not in cog.pending
+    await asyncio.wait_for(asyncio.gather(*cog.sending), 2)
+    assert len(ch.sent) == 1
+    assert "📦 **3 files**" in ch.sent[0][0] and "Only the first 3 of 4 files" in ch.sent[0][0]
+    await cog.on_message(dm(ch, 3, files=attachments(1)))
+    assert cog.pending[7].messages == 1  # the next message starts a new burst
+
+
+def test_burst_keeps_at_most_the_cap() -> None:
+    from zipbot.cogs.dm import Burst
+    from zipbot.media import extract, payload_from_message
+
+    items = extract(payload_from_message(dm(Channel(), 1, files=attachments(5))))
+    burst = Burst(cast(Any, None), started=0)
+    burst.add(items, 3)
+    burst.add(items, 3)
+    assert len(burst.items) == 3 and burst.offered == 10 and burst.messages == 2
+
+
+async def test_burst_lifetime_is_capped(cog: DmCog) -> None:
+    cog.bot.settings = cog.bot.settings.model_copy(update={"dm_debounce_sec": 8})
+    clock = SimpleNamespace(t=0.0)
+    cog.clock = lambda: clock.t
+    delays: list[float] = []
+
+    async def flush(user_id: int, burst: Any, delay: float) -> None:
+        delays.append(delay)
+
+    cog.flush = flush  # type: ignore[method-assign]
+    ch = Channel()
+    for n, t in enumerate([0, 7, 14, 21, 23, 30]):
+        clock.t = t
+        await cog.on_message(dm(ch, n, files=attachments(1)))
+        await asyncio.sleep(0)
+    # 3 x 8 s debounce = 24 s after the first message at most, however often more arrive
+    assert delays == [8, 8, 8, 3, 1, 0]
+
+
+async def test_help_has_a_cooldown(cog: DmCog) -> None:
+    clock = SimpleNamespace(t=0.0)
+    cog.clock = lambda: clock.t
+    ch = Channel()
+    await cog.on_message(dm(ch, 1))
+    await cog.on_message(dm(ch, 2))
+    await cog.on_message(dm(ch, 3, user=8))
+    assert [c for c, _ in ch.sent] == [HELP, HELP]
+    clock.t += HELP_COOLDOWN_SEC
+    await cog.on_message(dm(ch, 4))
+    assert len(ch.sent) == 3
+    assert list(cog.helped) == [7]  # user 8's entry expired and was dropped
+
+
+async def test_help_registry_is_bounded(cog: DmCog, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(dm_mod, "MAX_HELP_USERS", 2)
+    ch = Channel()
+    for user in range(4):
+        await cog.on_message(dm(ch, user, user=user))
+    assert len(cog.helped) == 2 and len(ch.sent) == 4
