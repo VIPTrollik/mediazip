@@ -1,24 +1,40 @@
 from __future__ import annotations
 
+import asyncio
 import re
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
 import discord
 import pytest
+from discord.components import _component_factory
 
-from helpers import EX, fixture, resolved_message
-from zipbot import handlers
+from helpers import EX, fixture, item, resolved_message
+from zipbot import handlers, views
 from zipbot.bot import EXTENSIONS, ZipBot, intents
 from zipbot.config import Settings
 from zipbot.store import Store
 from zipbot.views import (
+    BASKET_CLEARED,
+    BASKET_EMPTY,
+    DYNAMIC_ITEMS,
+    ID_BASKET,
+    ID_FILES,
+    ID_ZIP,
+    LINK_EXPIRED,
+    LINK_GONE,
+    PANEL_TOKEN_SEC,
+    REVOKED,
     AddLinkToBasketButton,
     BasketClearButton,
     BasketLinkButton,
+    Panels,
     RevokeButton,
+    UserCooldown,
     format_size,
+    safe_name,
 )
 
 ATTACHMENTS = "interaction_context_menu_attachments.json"
@@ -29,25 +45,97 @@ TOKEN_IN_URL = re.compile(r"/d#([A-Za-z0-9_-]{43})(\.files|\.zip)?$")
 def state(settings: Settings) -> Any:
     store = Store.from_settings(settings)
     store.clock = lambda: EX - 24 * 3600
-    return SimpleNamespace(store=store, settings=settings)
+    return SimpleNamespace(store=store, settings=settings, panels=Panels(), button_cooldown=UserCooldown())
 
 
-def interaction(state: Any, data: dict[str, Any] | None = None, user_id: int = 7) -> Any:
+_message_ids = iter(range(1000, 10**6))
+
+
+def interaction(state: Any, data: dict[str, Any] | None = None, user_id: int = 7, message: Any = None) -> Any:
+    sent = SimpleNamespace(message_id=next(_message_ids))
     return SimpleNamespace(
         user=SimpleNamespace(id=user_id),
         client=state,
         data=data,
-        response=SimpleNamespace(send_message=AsyncMock(), edit_message=AsyncMock()),
+        message=message,
+        sent=sent,  # what send_message returns: the new message's id
+        response=SimpleNamespace(send_message=AsyncMock(return_value=sent), edit_message=AsyncMock()),
+        delete_original_response=AsyncMock(),
     )
 
 
-def buttons(view: discord.ui.View | None) -> list[Any]:
-    assert view is not None
-    return [getattr(c, "item", c) for c in view.children]  # unwrap DynamicItems
+def message_of(view: discord.ui.LayoutView, *, cv2: bool = True, ephemeral: bool = True) -> Any:
+    """The panel as Discord sends it back on a click (parsed components, flags)."""
+    return SimpleNamespace(
+        id=next(_message_ids),
+        flags=SimpleNamespace(components_v2=cv2, ephemeral=ephemeral),
+        components=[_component_factory(cast(Any, d)) for d in view.to_components()],
+    )
+
+
+def flat(view: discord.ui.LayoutView) -> Iterator[dict[str, Any]]:
+    """Every component of the payload, nested ones included (what Discord's limit of 40 counts)."""
+
+    def walk(components: list[dict[str, Any]]) -> Iterator[dict[str, Any]]:
+        for c in components:
+            yield c
+            yield from walk(c.get("components", []))
+            if "accessory" in c:
+                yield c["accessory"]
+
+    return walk(view.to_components())
+
+
+def texts(view: Any) -> list[str]:
+    return [c["content"] for c in flat(view) if c["type"] == 10]
+
+
+def text(view: Any) -> str:
+    return "\n".join(texts(view))
+
+
+def gallery(view: Any) -> list[dict[str, Any]]:
+    galleries = [c for c in flat(view) if c["type"] == 12]
+    assert len(galleries) <= 1
+    return galleries[0]["items"] if galleries else []
+
+
+def link_buttons(view: Any) -> list[dict[str, Any]]:
+    return [c for c in flat(view) if c["type"] == 2 and c.get("url")]
+
+
+def custom_ids(view: Any) -> list[str]:
+    return [c["custom_id"] for c in flat(view) if c["type"] == 2 and "custom_id" in c]
+
+
+def panel(reply: views.Reply) -> discord.ui.LayoutView:
+    assert isinstance(reply, discord.ui.LayoutView), reply
+    return reply
+
+
+def token_of(url: str) -> str:
+    m = TOKEN_IN_URL.search(url)
+    assert m
+    return m.group(1)
+
+
+def main_urls(view: Any) -> tuple[str, str]:
+    by_id = {c.get("id"): c["url"] for c in link_buttons(view)}
+    return by_id[ID_FILES], by_id[ID_ZIP]
+
+
+def basket_zip_url(view: Any) -> str | None:
+    return next((c["url"] for c in link_buttons(view) if c.get("id") == ID_BASKET), None)
 
 
 def media_payload() -> dict[str, Any]:
     return resolved_message(fixture(ATTACHMENTS))
+
+
+def link_of(state: Any, files: int = 2, **kw: Any) -> tuple[discord.ui.LayoutView, Any]:
+    reply = panel(handlers.link_reply(state, 7, [item(f"{i}.jpg") for i in range(files)], "c/m", **kw))
+    record = state.store.resolve(token_of(main_urls(reply)[0]))
+    return reply, record
 
 
 # --- registration --------------------------------------------------------------------
@@ -76,116 +164,134 @@ async def test_commands_registered_for_every_context(settings: Settings) -> None
     await bot.close()
 
 
-# --- handlers ------------------------------------------------------------------------
+# --- the link panel ------------------------------------------------------------------
 
 
-def test_download_reply(state: Any) -> None:
-    content, view = handlers.download_reply(state, 7, media_payload(), "c/m")
-    assert content.startswith("📦 **5 files** · 51 KB · link expires <t:")
-    link_buttons = [b for b in buttons(view) if b.url]
-    assert [b.label for b in link_buttons] == ["Save to phone", "Download ZIP", "Open page"]
-    matches = [TOKEN_IN_URL.search(b.url) for b in link_buttons]
-    assert all(matches) and len({m.group(1) for m in matches if m}) == 1
-    assert [m.group(2) for m in matches if m] == [".files", ".zip", None]
-    assert all(b.url.startswith("https://dl.example.com/d#") and len(b.url) <= 512 for b in link_buttons)
-    token = matches[0].group(1) if matches[0] else ""
-    record = state.store.resolve(token)
+async def test_download_reply_panel(state: Any) -> None:
+    view = panel(handlers.download_reply(state, 7, media_payload(), "c/m"))
+    assert view.is_finished()  # detached (needs a running loop): buttons are handled by DynamicItems
+    (container,) = view.to_components()
+    assert container["type"] == 17  # one Container; Components V2 carries no `content`
+    assert view.has_components_v2()
+    assert texts(view)[0].startswith("📦 **5 files** · 51 KB · link expires <t:")
+
+    links = link_buttons(view)
+    assert [b["label"] for b in links] == ["Download all", "Download ZIP"]  # "Open page" is gone
+    files_url, zip_url = main_urls(view)
+    assert files_url.endswith(".files") and zip_url.endswith(".zip")
+    assert token_of(files_url) == token_of(zip_url)
+    assert all(b["url"].startswith("https://dl.example.com/d#") and len(b["url"]) <= 512 for b in links)
+    record = state.store.resolve(token_of(files_url))
     assert record and record.message_key == "c/m"
-    ids = [b.custom_id for b in buttons(view) if not b.url]
-    assert ids == [f"zb:basket:{record.link_id}", f"zb:revoke:{record.link_id}"]
+    assert custom_ids(view) == [f"zb:basket:{record.link_id}", f"zb:revoke:{record.link_id}"]
+    assert "Basket" not in text(view)  # no basket yet
+
+    thumbs = gallery(view)
+    assert len(thumbs) == 5  # images and the video's first frame
+    assert all(t["media"]["url"].startswith("https://media.discordapp.net/") for t in thumbs)
+    assert "format=webp" in thumbs[-1]["media"]["url"]  # clip.mp4
+    assert not any("📎" in t for t in texts(view))  # every file is in the gallery
 
 
 def test_download_reply_no_attachments(state: Any) -> None:
     payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
-    assert handlers.download_reply(state, 7, payload, "k") == (handlers.NO_ATTACHMENTS, None)
+    assert handlers.download_reply(state, 7, payload, "k") == handlers.NO_ATTACHMENTS
 
 
 def test_download_reply_respects_media_types(state: Any) -> None:
     state.settings = state.settings.model_copy(update={"media_types": frozenset({"video"})})
-    content, _ = handlers.download_reply(state, 7, media_payload(), "k")
-    assert content.startswith("📦 **1 file** · ")
+    view = panel(handlers.download_reply(state, 7, media_payload(), "k"))
+    assert texts(view)[0].startswith("📦 **1 file** · ")
 
 
 def test_download_reply_takes_any_file_by_default(state: Any) -> None:
-    content, _ = handlers.download_reply(state, 7, fixture("message_any_files.json"), "k")
-    assert content.startswith("📦 **6 files** · ")
+    view = panel(handlers.download_reply(state, 7, fixture("message_any_files.json"), "k"))
+    assert texts(view)[0].startswith("📦 **6 files** · ")
+    assert len(gallery(view)) == 1  # photo.png
+    assert "-# 📎 report.pdf · notes.txt · photos.zip · Makefile · backup.tar.gz" in texts(view)
 
 
 def test_download_reply_media_only_opt_out(state: Any) -> None:
     state.settings = state.settings.model_copy(update={"media_types": frozenset({"image", "video"})})
-    content, _ = handlers.download_reply(state, 7, fixture("message_any_files.json"), "k")
-    assert content.startswith("📦 **1 file** · ")  # just photo.png
+    view = panel(handlers.download_reply(state, 7, fixture("message_any_files.json"), "k"))
+    assert texts(view)[0].startswith("📦 **1 file** · ")  # just photo.png
     no_media = {"attachments": fixture("message_any_files.json")["attachments"][:5]}
-    assert handlers.download_reply(state, 7, no_media, "k") == (handlers.NO_ATTACHMENTS, None)
+    assert handlers.download_reply(state, 7, no_media, "k") == handlers.NO_ATTACHMENTS
 
 
 def test_download_reply_truncates(state: Any) -> None:
     state.settings = state.settings.model_copy(update={"max_files_per_link": 2})
     state.store.max_files_per_link = 2
-    content, _ = handlers.download_reply(state, 7, media_payload(), "k")
-    assert "**2 files**" in content
-    assert "Only the first 2 of 5 files" in content
+    view = panel(handlers.download_reply(state, 7, media_payload(), "k"))
+    assert "**2 files**" in texts(view)[0]
+    assert "Only the first 2 of 5 files" in texts(view)[0]
 
 
 def test_download_reply_link_error(state: Any) -> None:
     state.store.clock = lambda: EX  # CDN URLs about to expire
-    content, view = handlers.download_reply(state, 7, media_payload(), "k")
-    assert content.startswith("Couldn't create a link")
-    assert view is None
+    reply = handlers.download_reply(state, 7, media_payload(), "k")
+    assert isinstance(reply, str) and reply.startswith("Couldn't create a link")
 
 
-def test_basket_handlers(state: Any) -> None:
-    assert handlers.basket_show_reply(state, 7) == ("🧺 Your basket is empty.", None)
-    content, view = handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
-    assert "Added" in content and "1 message · 5 files" in content
-    assert [b.custom_id for b in buttons(view)] == ["zb:basketlink", "zb:basketclear"]
-    content, _ = handlers.add_to_basket_reply(state, 7, fixture("message_image_embed.json"), "c/2")
-    assert "2 messages · 6 files" in content
-    content, _ = handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
-    assert "already in your basket" in content
-
-    content, view = handlers.basket_link(state, 7)
-    assert "📦 **6 files**" in content
-    token_url = next(b.url for b in buttons(view) if b.url)
-    m = TOKEN_IN_URL.search(token_url)
-    assert m
-    record = state.store.resolve(m.group(1))
-    assert record and record.names[0] == "01/test-1.jpg" and record.names[-1].startswith("02/")
-    assert not any(b.custom_id and b.custom_id.startswith("zb:basket:") for b in buttons(view))
-
-    assert handlers.basket_clear_reply(state, 7) == ("🧺 Basket cleared.", None)
-    assert handlers.basket_clear_reply(state, 7)[0] == "🧺 Your basket is already empty."
-    assert "basket is empty" in handlers.basket_link(state, 7)[0]
+def test_panel_stays_within_discord_limits(state: Any) -> None:
+    state.store.add_to_basket(7, "b/1", [item("x.jpg")])
+    many = [item(f"p{i}.jpg") for i in range(60)] + [
+        item(f"d{i}.pdf", ctype="application/pdf", proxy_url=None) for i in range(40)
+    ]
+    view = panel(handlers.link_reply(state, 7, many, "k"))
+    components = list(flat(view))
+    assert len(components) <= 40
+    rows = [c for c in components if c["type"] == 1]
+    assert rows and all(len(r["components"]) <= 5 for r in rows)
+    assert len(gallery(view)) == 10
+    assert all(len(b["url"]) <= 512 for b in link_buttons(view))
+    assert view.content_length() <= 4000
+    hidden, names = next(t for t in texts(view) if "📎" in t).split("\n")
+    assert hidden == "-# 🖼️ +50 more images and videos"  # beyond the gallery's 10
+    assert names.endswith(" · +35 more") and names.count(" · ") == 5
 
 
-def test_add_no_attachments_to_basket(state: Any) -> None:
-    payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
-    content, view = handlers.add_to_basket_reply(state, 7, payload, "k")
-    assert content == "That message has no attachments to download.\n🧺 Your basket is empty."
-    assert view is None
+def test_gallery_only_shows_allowed_thumbnails(state: Any) -> None:
+    items = [
+        item("a.jpg"),
+        item("b.jpg", proxy_url=None),  # no proxy: no preview, listed by name instead
+        item("song.mp3", ctype="audio/mpeg"),
+        item("SPOILER_c.jpg"),
+    ]
+    view = panel(handlers.link_reply(state, 7, items, "k"))
+    thumbs = gallery(view)
+    assert [t.get("spoiler", False) for t in thumbs] == [False, True]  # spoilers stay blurred
+    assert "-# 📎 b.jpg · song.mp3" in texts(view)
 
 
-def test_basket_link_error(state: Any) -> None:
-    state.store.clock = lambda: EX - 300  # basket fresh, but CDN URLs expire within the safety margin
-    handlers.add_to_basket_reply(state, 7, media_payload(), "k")
-    content, view = handlers.basket_link(state, 7)
-    assert content.startswith("Couldn't create a link")
-    assert view is not None
+@pytest.mark.parametrize(
+    ("name", "shown"),
+    [
+        ("plain.jpg", "plain.jpg"),
+        ("01/in_folder.jpg", "in\\_folder.jpg"),
+        (
+            "**bold** ~~x~~ ||spoiler|| `code`",
+            "\\*\\*bold\\*\\* \\~\\~x\\~\\~ \\|\\|spoiler\\|\\| \\`code\\`",
+        ),
+        ("a\nb\r\nc\td", "a b c d"),
+        ("@everyone", "@​everyone"),
+        ("<@123456789012345678>", "<@​123456789012345678>"),
+        ("[click](x)", "\\[click](x)"),  # a masked link
+        ("evil‮gpj.exe", "evilgpj.exe"),  # bidi override dropped
+        ("x" * 60, "x" * 39 + "…"),
+    ],
+)
+def test_safe_name(name: str, shown: str) -> None:
+    assert safe_name(name) == shown
 
 
-def test_interaction_payload_prefers_raw() -> None:
-    raw = media_payload()
-    msg = cast(
-        discord.Message, SimpleNamespace(id=int(raw["id"]), attachments=[], embeds=[], message_snapshots=[])
-    )
-    inter = cast(discord.Interaction, SimpleNamespace(data={"resolved": {"messages": {raw["id"]: raw}}}))
-    assert handlers.interaction_payload(inter, msg) is raw
-    empty = cast(discord.Interaction, SimpleNamespace(data=None))
-    assert handlers.interaction_payload(empty, msg) == {
-        "attachments": [],
-        "embeds": [],
-        "message_snapshots": [],
-    }
+def test_hostile_filenames_in_panel(state: Any) -> None:
+    hostile = "# @here **x** [y](z) <@&123456789012345678>\n-# hi.txt"
+    view = panel(handlers.link_reply(state, 7, [item(hostile, ctype="text/plain", proxy_url=None)], "k"))
+    names = next(t for t in texts(view) if t.startswith("-# 📎"))
+    assert "\n" not in names
+    assert "@here" not in names and "<@&1" not in names
+    assert "**x**" not in names
 
 
 @pytest.mark.parametrize(
@@ -195,45 +301,165 @@ def test_format_size(n: int, text: str) -> None:
     assert format_size(n) == text
 
 
+# --- basket --------------------------------------------------------------------------
+
+
+def test_basket_handlers(state: Any) -> None:
+    assert handlers.basket_show_reply(state, 7) == BASKET_EMPTY
+    view = panel(handlers.add_to_basket_reply(state, 7, media_payload(), "c/1"))
+    assert texts(view)[0] == "✓ Added 5 files to your basket."
+    assert texts(view)[1].startswith("🧺 **Basket: 5 files from 1 message** · 51 KB · link expires <t:")
+    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Basket ZIP"]
+    assert custom_ids(view) == ["zb:basketclear"]
+    first_token = token_of(main_urls(view)[0])
+
+    view = panel(handlers.add_to_basket_reply(state, 7, fixture("message_image_embed.json"), "c/2"))
+    assert "6 files from 2 messages" in text(view)
+    assert state.store.resolve(first_token) is None  # one live basket link per user
+    record = state.store.resolve(token_of(main_urls(view)[1]))
+    assert record and record.names[0] == "01/test-1.jpg" and record.names[-1].startswith("02/")
+    assert len(gallery(view)) == 6
+
+    view = panel(handlers.add_to_basket_reply(state, 7, media_payload(), "c/1"))
+    assert texts(view)[0] == "That message is already in your basket."
+    assert state.store.active_links(7) == 1
+
+    cleared = panel(handlers.basket_clear_reply(state, 7))
+    assert texts(cleared) == [BASKET_CLEARED]
+    assert state.store.active_links(7) == 0  # clearing revokes the basket link
+    assert handlers.basket_clear_reply(state, 7) == "🧺 Your basket is already empty."
+    assert handlers.basket_show_reply(state, 7) == BASKET_EMPTY
+
+
+def test_add_no_attachments_to_basket(state: Any) -> None:
+    payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
+    reply = handlers.add_to_basket_reply(state, 7, payload, "k")
+    assert reply == f"That message has no attachments to download.\n{BASKET_EMPTY}"
+
+
+def test_basket_link_error(state: Any) -> None:
+    state.store.clock = lambda: EX - 300  # basket fresh, but CDN URLs expire within the safety margin
+    view = panel(handlers.add_to_basket_reply(state, 7, media_payload(), "k"))
+    assert "Couldn't create a link" in text(view)
+    assert link_buttons(view) == [] and custom_ids(view) == ["zb:basketclear"]
+
+
+def test_link_panel_shows_the_basket(state: Any) -> None:
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    view, record = link_of(state)
+    assert "🧺 Basket: 5 files from 1 message" in texts(view)
+    second_row = [c for c in flat(view) if c["type"] == 1][1]["components"]
+    labels = [b["label"] for b in second_row]
+    assert labels == ["Add to basket", "Basket ZIP", "Clear basket", "Revoke"]
+    basket_url = basket_zip_url(view)
+    assert basket_url and basket_url.endswith(".zip")
+    basket_record = state.store.resolve(token_of(basket_url))
+    assert basket_record is not None and basket_record is not record and len(basket_record.items) == 5
+    link_of(state)  # the next panel re-mints the basket link and revokes this one
+    assert state.store.resolve(token_of(basket_url)) is None
+
+
 # --- buttons -------------------------------------------------------------------------
 
 
-async def test_revoke_button(state: Any) -> None:
-    token, record = state.store.create_link(7, handlers.extract(media_payload()))
-    stranger = interaction(state, user_id=8)
+async def test_revoke_button_edits_panel_in_place(state: Any) -> None:
+    view, record = link_of(state)
+    stranger = interaction(state, user_id=8, message=message_of(view))
     await RevokeButton(record.link_id).callback(stranger)
-    assert "already expired" in stranger.response.edit_message.call_args.kwargs["content"]
-    assert state.store.resolve(token)
-    owner = interaction(state)
+    assert texts(stranger.response.edit_message.call_args.kwargs["view"]) == [LINK_GONE]
+    assert state.store.resolve(token_of(main_urls(view)[0]))
+
+    owner = interaction(state, message=message_of(view))
     await RevokeButton(record.link_id).callback(owner)
-    assert owner.response.edit_message.call_args.kwargs == {
-        "content": "🗑️ Link revoked — it no longer works.",
-        "view": None,
-    }
-    assert state.store.resolve(token) is None
+    edited = owner.response.edit_message.call_args.kwargs["view"]
+    assert texts(edited) == [REVOKED]
+    assert "can't be opened again" in REVOKED and "no longer works" not in REVOKED  # v0 #4
+    assert link_buttons(edited) == [] and custom_ids(edited) == []
+    assert state.store.resolve(token_of(main_urls(view)[0])) is None
+    owner.response.send_message.assert_not_awaited()
+    assert len(state.panels) == 2  # each click now owns the panel (fresh token)
 
 
 async def test_add_link_to_basket_button(state: Any) -> None:
-    _, record = state.store.create_link(7, handlers.extract(media_payload()), message_key="c/m")
-    inter = interaction(state)
+    view, record = link_of(state)
+    inter = interaction(state, message=message_of(view))
     await AddLinkToBasketButton(record.link_id).callback(inter)
-    args = inter.response.send_message.call_args
-    assert "Added" in args.args[0] and args.kwargs["ephemeral"] is True
+    edited = inter.response.edit_message.call_args.kwargs["view"]
+    assert texts(edited)[0] == "✓ Added 2 files to your basket."
+    assert main_urls(edited) == main_urls(view)  # the same link, taken back from the message
+    assert "🧺 Basket: 2 files from 1 message" in texts(edited)
+    assert basket_zip_url(edited)
     basket = state.store.basket(7)
     assert basket and basket.entries[0].message_key == "c/m"
-    other = interaction(state, user_id=8)
+
+    again = interaction(state, message=message_of(edited))
+    await AddLinkToBasketButton(record.link_id).callback(again)
+    assert texts(again.response.edit_message.call_args.kwargs["view"])[0] == (
+        "That message is already in your basket."
+    )
+
+    other = interaction(state, user_id=8, message=message_of(view))
     await AddLinkToBasketButton(record.link_id).callback(other)
-    assert "expired" in other.response.send_message.call_args.args[0]
+    other.response.send_message.assert_awaited_once_with(LINK_EXPIRED, ephemeral=True)
+    other.response.edit_message.assert_not_awaited()
 
 
-async def test_basket_buttons(state: Any) -> None:
-    handlers.add_to_basket_reply(state, 7, media_payload(), "k")
-    inter = interaction(state)
-    await BasketLinkButton().callback(inter)
-    assert "📦 **5 files**" in inter.response.edit_message.call_args.kwargs["content"]
+async def test_add_button_without_the_panel_link_shows_the_basket(state: Any) -> None:
+    _, record = link_of(state)
+    bare = SimpleNamespace(id=1, flags=SimpleNamespace(components_v2=True, ephemeral=True), components=[])
+    inter = interaction(state, message=bare)  # the link buttons' URLs can't be recovered
+    await AddLinkToBasketButton(record.link_id).callback(inter)
+    edited = inter.response.edit_message.call_args.kwargs["view"]
+    assert texts(edited)[1].startswith("🧺 **Basket: 2 files from 1 message**")
+
+
+async def test_clear_button(state: Any) -> None:
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    view, _ = link_of(state)
+    inter = interaction(state, message=message_of(view))
     await BasketClearButton().callback(inter)
-    assert inter.response.edit_message.call_args.kwargs == {"content": "🧺 Basket cleared.", "view": None}
+    edited = inter.response.edit_message.call_args.kwargs["view"]
+    assert texts(edited)[0] == BASKET_CLEARED and main_urls(edited) == main_urls(view)
+    assert "Basket:" not in text(edited) and basket_zip_url(edited) is None
     assert state.store.basket(7) is None
+
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    basket_view = panel(handlers.basket_show_reply(state, 7))
+    inter = interaction(state, message=message_of(basket_view))
+    await BasketClearButton().callback(inter)
+    assert texts(inter.response.edit_message.call_args.kwargs["view"]) == [BASKET_CLEARED]
+
+
+async def test_legacy_basket_link_button(state: Any) -> None:
+    handlers.add_to_basket_reply(state, 7, media_payload(), "k")
+    legacy = SimpleNamespace(id=1, flags=SimpleNamespace(components_v2=False, ephemeral=True), components=[])
+    inter = interaction(state, message=legacy)
+    await BasketLinkButton().callback(inter)
+    # A v0.0.0 reply can't turn into a panel: the panel is sent as a new reply instead.
+    inter.response.edit_message.assert_not_awaited()
+    kwargs = inter.response.send_message.call_args.kwargs
+    assert kwargs["ephemeral"] is True and "5 files from 1 message" in text(kwargs["view"])
+
+
+async def test_dm_panel_is_edited_but_not_tracked(state: Any) -> None:
+    view, record = link_of(state)
+    inter = interaction(state, message=message_of(view, ephemeral=False))
+    await RevokeButton(record.link_id).callback(inter)
+    inter.response.edit_message.assert_awaited_once()
+    assert len(state.panels) == 0  # an ordinary DM message is never deleted
+
+
+async def test_button_cooldown(state: Any) -> None:
+    state.button_cooldown = UserCooldown(rate=2, per=60, cap=2)
+    button = BasketClearButton()
+    first = interaction(state)
+    assert await button.interaction_check(first) and await button.interaction_check(first)
+    assert not await button.interaction_check(first)
+    text = first.response.send_message.call_args.args[0]
+    assert text.startswith("You're going a bit fast — try again in ")
+    assert await AddLinkToBasketButton("abcdef").interaction_check(interaction(state, user_id=8))
+    assert await RevokeButton("abcdef").interaction_check(interaction(state, user_id=9))
+    assert len(state.button_cooldown._buckets) == 2  # bounded
 
 
 async def test_dynamic_items_parse_custom_ids() -> None:
@@ -242,6 +468,197 @@ async def test_dynamic_items_parse_custom_ids() -> None:
     item = await RevokeButton.from_custom_id(cast(Any, None), cast(Any, None), match)
     assert item.link_id == "abcDEF_-12"
     assert not re.fullmatch(RevokeButton.__discord_ui_compiled_template__, "zb:revoke:../../x")
+
+
+def test_every_rendered_button_routes_to_a_dynamic_item(state: Any) -> None:
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    view, _ = link_of(state)
+    ids = custom_ids(view) + custom_ids(panel(handlers.basket_show_reply(state, 7)))
+    assert len(ids) == 4
+    for cid in ids:
+        assert sum(bool(d.__discord_ui_compiled_template__.fullmatch(cid)) for d in DYNAMIC_ITEMS) == 1
+
+
+async def test_click_routes_through_discord_py(settings: Settings, state: Any) -> None:
+    """discord.py rebuilds the clicked panel from the message, swaps in our DynamicItem,
+    runs interaction_check (cooldown), then the callback."""
+    bot = ZipBot(settings, state.store)
+    view, record = link_of(state)
+    message = message_of(view)
+    custom_id = f"zb:revoke:{record.link_id}"
+    inter = interaction(bot, data={"custom_id": custom_id, "component_type": 2}, message=message)
+    match = RevokeButton.__discord_ui_compiled_template__.fullmatch(custom_id)
+    assert match
+    store = bot._connection._view_store
+    await store.schedule_dynamic_item_call(2, RevokeButton, inter, custom_id, match)
+    assert texts(inter.response.edit_message.call_args.kwargs["view"]) == [REVOKED]
+    await bot.close()
+
+
+# --- the live panel ------------------------------------------------------------------
+
+
+class Clock:
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def __call__(self) -> float:
+        return self.t
+
+
+async def drain() -> None:
+    for _ in range(3):
+        await asyncio.sleep(0)
+
+
+async def test_new_panel_deletes_the_previous_one(state: Any) -> None:
+    clock = Clock()
+    panels = Panels(clock=clock)
+    first, second, third = interaction(state), interaction(state), interaction(state)
+    panels.opened(7, first, 1, panels.ticket())
+    clock.t += PANEL_TOKEN_SEC - 1
+    panels.opened(7, second, 2, panels.ticket())
+    await drain()
+    first.delete_original_response.assert_awaited_once()
+    clock.t += PANEL_TOKEN_SEC  # too old: its token can't delete any more
+    panels.opened(7, third, 3, panels.ticket())
+    await drain()
+    second.delete_original_response.assert_not_awaited()
+    assert len(panels) == 1
+
+
+async def test_click_on_the_live_panel_refreshes_it(state: Any) -> None:
+    panels = Panels()
+    command, click = interaction(state), interaction(state)
+    panels.opened(7, command, 5, panels.ticket())
+    panels.clicked(7, click, 5, panels.ticket())  # the button edited message 5 in place
+    later = interaction(state)
+    panels.opened(7, later, 6, panels.ticket())
+    await drain()
+    command.delete_original_response.assert_not_awaited()
+    click.delete_original_response.assert_awaited_once()  # deleted with the fresh token
+
+
+async def test_click_on_an_older_panel_keeps_the_newer_one(state: Any) -> None:
+    panels = Panels()
+    newer = interaction(state)
+    panels.opened(7, newer, 2, panels.ticket())
+    stale_click = interaction(state)
+    panels.clicked(7, stale_click, 1, panels.ticket())  # message 1: >14 min old, or from before a restart
+    panels.opened(7, interaction(state), 3, panels.ticket())
+    await drain()
+    newer.delete_original_response.assert_awaited_once()  # the live one, not message 1
+    stale_click.delete_original_response.assert_not_awaited()
+    # With nothing live, a click on any panel takes over.
+    lone = Panels()
+    lone.clicked(8, stale_click, 1, lone.ticket())
+    assert len(lone) == 1
+
+
+async def test_click_on_a_panel_being_deleted_is_ignored(state: Any) -> None:
+    panels = Panels()
+    a, b = interaction(state), interaction(state)
+    panels.opened(7, a, 1, panels.ticket())
+    panels.opened(7, b, 2, panels.ticket())  # A's delete is now in flight
+    panels.clicked(7, interaction(state), 1, panels.ticket())  # the user clicks A before it lands
+    await drain()
+    b.delete_original_response.assert_not_awaited()  # B survives
+    a.delete_original_response.assert_awaited_once()
+
+
+async def test_out_of_order_replies_keep_the_newest(state: Any) -> None:
+    panels = Panels()
+    older, newer = interaction(state), interaction(state)
+    t_old, t_new = panels.ticket(), panels.ticket()  # taken before each send
+    panels.opened(7, newer, 2, t_new)  # the newer reply's response came back first
+    panels.opened(7, older, 1, t_old)
+    await drain()
+    older.delete_original_response.assert_awaited_once()
+    newer.delete_original_response.assert_not_awaited()
+    late_click = interaction(state)
+    panels.clicked(7, late_click, 2, t_old)  # a click whose edit started before the newer reply
+    panels.opened(7, interaction(state), 3, panels.ticket())
+    await drain()
+    newer.delete_original_response.assert_awaited_once()
+    late_click.delete_original_response.assert_not_awaited()
+
+
+async def test_delete_failure_is_swallowed(state: Any) -> None:
+    panels = Panels()
+    old = interaction(state)
+    response = cast(Any, SimpleNamespace(status=404, reason="Not Found"))
+    old.delete_original_response.side_effect = discord.NotFound(response, "Unknown Message")
+    panels.opened(7, old, 1, panels.ticket())
+    panels.opened(7, interaction(state), 2, panels.ticket())
+    await drain()
+    old.delete_original_response.assert_awaited_once()
+    assert not panels._tasks  # finished and released
+
+
+async def test_registry_is_bounded(state: Any) -> None:
+    clock = Clock()
+    panels = Panels(clock=clock, cap=3)
+    for user in range(5):
+        panels.opened(user, interaction(state), user, panels.ticket())
+        panels.opened(user, interaction(state), 100 + user, panels.ticket())
+    assert len(panels) == 3 and len(panels._doomed) == 5  # doomed is capped at 2 x cap = 6
+    panels.opened(5, interaction(state), 6, panels.ticket())
+    for n in range(7, 12):
+        panels.opened(5, interaction(state), n, panels.ticket())
+    assert len(panels._doomed) == 6
+    clock.t += PANEL_TOKEN_SEC
+    panels.opened(99, interaction(state), 99, panels.ticket())
+    assert len(panels) == 1  # stale entries are dropped on access
+    await drain()
+
+
+async def test_button_on_an_old_panel_edits_it_without_taking_over(state: Any) -> None:
+    old_view, old_record = link_of(state)  # e.g. still visible from before a restart
+    live = interaction(state)
+    await views.show(live, panel(link_of(state)[0]))
+    click = interaction(state, message=message_of(old_view))
+    await RevokeButton(old_record.link_id).callback(click)
+    await drain()
+    click.response.edit_message.assert_awaited_once()
+    live.delete_original_response.assert_not_awaited()  # the newer panel keeps its URLs
+    nxt = interaction(state)
+    await views.show(nxt, panel(link_of(state)[0]))
+    await drain()
+    live.delete_original_response.assert_awaited_once()  # it is still the live one
+    click.delete_original_response.assert_not_awaited()
+
+
+async def test_revoke_keeps_the_shown_basket_link(state: Any) -> None:
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    view, record = link_of(state)
+    shown = basket_zip_url(view)
+    assert shown
+    inter = interaction(state, message=message_of(view))
+    await RevokeButton(record.link_id).callback(inter)
+    edited = inter.response.edit_message.call_args.kwargs["view"]
+    assert basket_zip_url(edited) == shown  # basket unchanged: Basket ZIP elsewhere keeps working
+    assert state.store.resolve(token_of(shown))
+
+
+async def test_reply_is_sent_before_the_old_panel_is_deleted(state: Any) -> None:
+    order: list[str] = []
+    old, new = interaction(state), interaction(state)
+    old.delete_original_response.side_effect = lambda: order.append("delete")
+    new.response.send_message.side_effect = lambda *a, **kw: order.append("send") or new.sent
+    await views.show(old, panel(link_of(state)[0]))
+    await views.show(new, panel(link_of(state)[0]))
+    await drain()
+    assert order == ["send", "delete"]
+
+
+async def test_notices_leave_the_live_panel_alone(state: Any) -> None:
+    live = interaction(state)
+    await views.show(live, panel(link_of(state)[0]))
+    notice = interaction(state)
+    await views.show(notice, handlers.NO_ATTACHMENTS)
+    await drain()
+    notice.response.send_message.assert_awaited_once_with(handlers.NO_ATTACHMENTS, ephemeral=True)
+    live.delete_original_response.assert_not_awaited()
 
 
 # --- cog callbacks -------------------------------------------------------------------
@@ -254,15 +671,18 @@ async def test_context_menu_callbacks(settings: Settings, state: Any) -> None:
     cog = ContextMenus(bot)
     raw = media_payload()
     msg = cast(Any, SimpleNamespace(id=int(raw["id"]), channel=SimpleNamespace(id=5)))
-    inter = interaction(state, data={"resolved": {"messages": {raw["id"]: raw}}})
+    inter = interaction(bot, data={"resolved": {"messages": {raw["id"]: raw}}})
     await cog.download(inter, msg)
     kwargs = inter.response.send_message.call_args.kwargs
-    assert kwargs["ephemeral"] is True and kwargs["view"] is not None
-    inter2 = interaction(state, data={"resolved": {"messages": {raw["id"]: raw}}})
+    assert kwargs["ephemeral"] is True and isinstance(kwargs["view"], discord.ui.LayoutView)
+    assert inter.response.send_message.call_args.args == ()  # no `content` next to a V2 layout
+    inter2 = interaction(bot, data={"resolved": {"messages": {raw["id"]: raw}}})
     await cog.add(inter2, msg)
-    assert "Added" in inter2.response.send_message.call_args.args[0]
+    assert texts(inter2.response.send_message.call_args.kwargs["view"])[0].startswith("✓ Added 5 files")
     basket = state.store.basket(7)
     assert basket and basket.entries[0].message_key == f"5/{raw['id']}"
+    await drain()
+    inter.delete_original_response.assert_awaited_once()  # one live panel
     await bot.close()
 
 
@@ -271,8 +691,9 @@ async def test_basket_cog_callbacks(settings: Settings, state: Any) -> None:
 
     bot = ZipBot(settings, state.store)
     cog = BasketCog(bot)
+    state.store.add_to_basket(7, "k", [item()])
     for name in ("show", "link", "clear"):
-        inter = interaction(state)
+        inter = interaction(bot)
         await getattr(cog, name).callback(cog, inter)
         assert inter.response.send_message.call_args.kwargs["ephemeral"] is True
     await bot.close()

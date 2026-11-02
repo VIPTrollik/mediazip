@@ -87,13 +87,43 @@ def test_per_user_cap_evicts_oldest(store: Store) -> None:
     assert store.active_links(7) == 2
 
 
-def test_global_cap(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(store_mod, "MAX_LINKS_TOTAL", 2)
-    first, _ = store.create_link(1, [item()])
+def test_global_item_budget_refuses_instead_of_evicting(
+    store: Store, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(store_mod, "MAX_ITEMS_TOTAL", 4)
+    first, _ = store.create_link(1, [item(), item("b.jpg")])
     store.create_link(2, [item()])
-    store.create_link(3, [item()])
-    assert len(store) == 2
-    assert store.resolve(first) is None
+    with pytest.raises(LinkError, match="busy"):
+        store.create_link(3, [item(), item("b.jpg")])
+    assert store.resolve(first)  # nobody else's link was evicted
+    assert len(store) == 2 and store.item_count == 3
+    store.create_link(3, [item()])  # still fits exactly
+    assert store.item_count == 4
+
+
+def test_budget_counts_own_evictions(store: Store, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store_mod, "MAX_ITEMS_TOTAL", 4)
+    store.create_link(7, [item(), item("b.jpg")])
+    store.create_link(7, [item(), item("b.jpg")])  # full; the per-user cap is 2
+    _, record = store.create_link(7, [item(), item("b.jpg")])  # replaces the user's oldest
+    assert store.item_count == 4 and store.active_links(7) == 2
+    with pytest.raises(LinkError):
+        store.create_link(8, [item()])
+    assert store.link_by_id(record.link_id, 7)
+
+
+def test_item_count_tracks_every_removal(store: Store, clock: Clock) -> None:
+    token, record = store.create_link(7, [item(), item("b.jpg")])
+    store.create_link(8, [item()])
+    store.revoke(record.link_id, 7)
+    assert store.item_count == 1
+    clock.t += 3600
+    assert store.sweep() == 1
+    assert store.item_count == 0
+    t2, _ = store.create_link(9, [item()])
+    clock.t += 3600
+    assert store.resolve(t2) is None
+    assert store.item_count == 0 and store.resolve(token) is None
 
 
 def test_revoke_only_by_owner(store: Store) -> None:
@@ -164,3 +194,62 @@ def test_sweep(store: Store, clock: Clock) -> None:
     assert store.sweep() == 3  # both links and basket 7 hit their TTL
     assert len(store) == 0
     assert store.basket(9) is not None
+
+
+def test_one_live_basket_link(store: Store) -> None:
+    with pytest.raises(LinkError):
+        store.basket_link(7)
+    store.add_to_basket(7, "m1", [item("a.jpg")])
+    t1, r1 = store.basket_link(7)
+    store.create_link(7, [item()])  # an ordinary link next to it
+    store.add_to_basket(7, "m2", [item("b.jpg")])
+    t2, r2 = store.basket_link(7)
+    assert store.resolve(t1) is None  # replaced, not piled up
+    assert store.resolve(t2) is r2 and r2.names == ("01/a.jpg", "02/b.jpg")
+    t3, _ = store.basket_link(7)  # the cap of 2 is never eaten by basket links
+    assert store.active_links(7) == 2 and store.resolve(t3)
+    basket = store.basket(7)
+    assert basket and basket.link_id != r1.link_id
+
+
+def test_clear_basket_revokes_its_link(store: Store) -> None:
+    store.add_to_basket(7, "m1", [item()])
+    token, _ = store.basket_link(7)
+    assert store.clear_basket(7)
+    assert store.resolve(token) is None
+    store.add_to_basket(7, "m1", [item()])
+    assert store.clear_basket(7)  # no link was made: nothing to revoke
+
+
+def test_per_user_item_budget(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store_mod, "MAX_ITEMS_PER_USER", 6)
+    s = Store(
+        link_ttl_sec=3600,
+        basket_ttl_sec=3600,
+        max_files_per_link=3,
+        basket_max_messages=3,
+        max_active_links_per_user=20,
+        clock=clock,
+    )
+    three = [item(f"{i}.jpg") for i in range(3)]
+    t1, _ = s.create_link(7, three)
+    t2, _ = s.create_link(7, three)
+    t_other, _ = s.create_link(8, three)
+    t3, _ = s.create_link(7, three[:1])  # 7 would hold 7 > 6 items: their own oldest goes
+    assert s.resolve(t1) is None
+    assert s.resolve(t2) and s.resolve(t3) and s.resolve(t_other)
+    assert s.item_count == 7
+
+
+def test_basket_link_is_reused_while_unchanged(store: Store) -> None:
+    store.add_to_basket(7, "m1", [item("a.jpg")])
+    t1, r1 = store.basket_link(7)
+    assert store.basket_link(7, t1) == (t1, r1)  # same contents: the panel's link stays valid
+    t2, _ = store.basket_link(7)  # no token to hand (a new panel): re-minted
+    assert store.resolve(t1) is None
+    store.add_to_basket(7, "m2", [item("b.jpg")])
+    t3, r3 = store.basket_link(7, t2)  # contents changed: re-minted
+    assert t3 != t2 and store.resolve(t2) is None and len(r3.items) == 2
+    other, _ = store.create_link(7, [item()])
+    assert store.basket_link(7, other)[0] != other  # only the basket's own link is reused
+    assert store.basket_link(7, "bogus")[0]

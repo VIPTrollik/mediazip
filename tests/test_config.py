@@ -65,7 +65,13 @@ def test_allows_http_localhost(env: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.parametrize(
-    ("key", "value"), [("MEDIA_TYPES", "pdf"), ("MEDIA_TYPES", ","), ("LINK_TTL_MIN", "0")]
+    ("key", "value"),
+    [
+        ("MEDIA_TYPES", "pdf"),
+        ("MEDIA_TYPES", ","),
+        ("LINK_TTL_MIN", "0"),
+        ("MAX_ACTIVE_LINKS_PER_USER", "1"),  # a panel needs its own link plus the basket link
+    ],
 )
 def test_rejects_bad_values(env: pytest.MonkeyPatch, key: str, value: str) -> None:
     env.setenv(key, value)
