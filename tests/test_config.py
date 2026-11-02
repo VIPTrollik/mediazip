@@ -30,6 +30,21 @@ def test_defaults(env: pytest.MonkeyPatch) -> None:
     assert not any(ip_address("172.18.0.1") in net for net in s.trusted_proxies)
 
 
+def test_application_id_optional(env: pytest.MonkeyPatch) -> None:
+    assert load().discord_application_id is None
+    env.setenv("DISCORD_APPLICATION_ID", "")  # the .env.example line, left empty
+    assert load().discord_application_id is None
+    env.setenv("DISCORD_APPLICATION_ID", "1234567890123")
+    assert load().discord_application_id == 1234567890123
+
+
+@pytest.mark.parametrize("value", ["abc", "0", "-5"])
+def test_rejects_bad_application_id(env: pytest.MonkeyPatch, value: str) -> None:
+    env.setenv("DISCORD_APPLICATION_ID", value)
+    with pytest.raises(ValidationError):
+        load()
+
+
 def test_media_only_opt_out(env: pytest.MonkeyPatch) -> None:
     env.setenv("MEDIA_TYPES", "image,video")
     s = load()

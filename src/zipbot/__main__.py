@@ -31,7 +31,9 @@ async def sweeper(store: Store) -> None:
 
 async def run(settings: Settings) -> None:
     store = Store.from_settings(settings)
-    runner = web.AppRunner(create_app(settings, store), access_log=None)  # access log would only add noise
+    bot: ZipBot | None = None  # the install link needs the application id, known once the bot logs in
+    app = create_app(settings, store, application_id=lambda: bot.application_id if bot else None)
+    runner = web.AppRunner(app, access_log=None)  # access log would only add noise
     await runner.setup()
     await web.TCPSite(runner, settings.web_host, settings.web_port).start()
     log.info("web listening on %s:%d", settings.web_host, settings.web_port)

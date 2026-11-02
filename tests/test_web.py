@@ -6,6 +6,7 @@ from ipaddress import ip_network
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 import jsonschema
 import pytest
@@ -63,7 +64,11 @@ async def test_pages_and_static(client: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    ("path", "ctype"), [("/static/icons.svg", "image/svg+xml"), ("/static/style.css", "text/css")]
+    ("path", "ctype"),
+    [
+        ("/static/icons.svg", "image/svg+xml"),
+        ("/static/style.css", "text/css"),
+    ],
 )
 async def test_theme_assets_served_with_security_headers(client: Any, path: str, ctype: str) -> None:
     resp = await client.get(path)
@@ -71,6 +76,60 @@ async def test_theme_assets_served_with_security_headers(client: Any, path: str,
     assert resp.headers["Content-Type"].startswith(ctype)  # nosniff: a wrong type would break <use>/CSS
     for name, value in SECURITY_HEADERS.items():
         assert resp.headers[name] == value
+
+
+def _query(location: str) -> dict[str, list[str]]:
+    parts = urlsplit(location)
+    assert f"{parts.scheme}://{parts.netloc}{parts.path}" == "https://discord.com/oauth2/authorize"
+    return parse_qs(parts.query)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/install", {"integration_type": ["1"], "scope": ["applications.commands"]}),
+        ("/install?type=user", {"integration_type": ["1"], "scope": ["applications.commands"]}),
+        ("/install?type=bogus", {"integration_type": ["1"], "scope": ["applications.commands"]}),
+        (
+            "/install?type=guild",
+            {"integration_type": ["0"], "scope": ["applications.commands bot"], "permissions": ["0"]},
+        ),
+    ],
+)
+async def test_install_redirects_to_discord(
+    aiohttp_client: Any, settings: Settings, store: Store, path: str, expected: dict[str, list[str]]
+) -> None:
+    client = await aiohttp_client(create_app(settings, store, application_id=lambda: 1234567890123))
+    resp = await client.get(path, allow_redirects=False)
+    assert resp.status == 302
+    assert _query(resp.headers["Location"]) == {"client_id": ["1234567890123"], **expected}
+    assert resp.headers["Content-Security-Policy"] == SECURITY_HEADERS["Content-Security-Policy"]
+
+
+async def test_install_prefers_configured_id(aiohttp_client: Any, settings: Settings, store: Store) -> None:
+    s = settings.model_copy(update={"discord_application_id": 42})
+    client = await aiohttp_client(create_app(s, store, application_id=lambda: None))
+    resp = await client.get("/install", allow_redirects=False)
+    assert resp.status == 302
+    assert _query(resp.headers["Location"])["client_id"] == ["42"]
+
+
+async def test_install_unavailable_before_login(client: Any) -> None:
+    resp = await client.get("/install?type=guild", allow_redirects=False)
+    assert resp.status == 503
+    assert resp.headers["Retry-After"] == "30"
+    assert resp.headers["Content-Type"].startswith("text/html")
+    assert "not ready" in await resp.text()
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+def test_install_url_encodes_scope_as_space() -> None:
+    url = web_app.install_url(7, "guild")
+    assert url == (
+        "https://discord.com/oauth2/authorize"
+        "?client_id=7&integration_type=0&scope=applications.commands%20bot&permissions=0"
+    )
 
 
 def test_icon_sprite_is_self_contained() -> None:

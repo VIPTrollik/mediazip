@@ -1,4 +1,4 @@
-"""aiohttp web app: download page, resolve API, health check (PLAN.md §5, §6)."""
+"""aiohttp web app: landing + install link, download page, resolve API, health check (PLAN.md §5, §6)."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
+from urllib.parse import quote, urlencode
 
 from aiohttp import web
 
@@ -41,10 +42,21 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,100}")
 NOT_FOUND = {"error": "not_found"}
 MAX_TRACKED_CLIENTS = 10_000
 
+AUTHORIZE_URL = "https://discord.com/oauth2/authorize"
+# integration_type 1 = user install (the default), 0 = guild install. The guild install adds the bot
+# user only so members can DM it; interaction replies need no permissions (PLAN.md §Discord setup).
+INSTALL_PARAMS = {
+    "user": {"integration_type": "1", "scope": "applications.commands"},
+    "guild": {"integration_type": "0", "scope": "applications.commands bot", "permissions": "0"},
+}
+INSTALL_RETRY_SEC = 30
+
 log = logging.getLogger(__name__)
 
 SETTINGS_KEY = web.AppKey("settings", Settings)
 STORE_KEY = web.AppKey("store", Store)
+# Returns the application id once the bot has logged in (None before that).
+APPLICATION_ID_KEY = web.AppKey[Callable[[], int | None]]("application_id")
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -162,13 +174,36 @@ async def healthz(_: web.Request) -> web.Response:
     return web.json_response({"status": "ok"})
 
 
-def create_app(settings: Settings, store: Store) -> web.Application:
+def install_url(application_id: int, kind: str) -> str:
+    return (
+        f"{AUTHORIZE_URL}?{urlencode({'client_id': application_id, **INSTALL_PARAMS[kind]}, quote_via=quote)}"
+    )
+
+
+async def install(request: web.Request) -> web.StreamResponse:
+    """`/install` (user install) or `/install?type=guild` → Discord's OAuth2 install screen."""
+    kind = "guild" if request.query.get("type") == "guild" else "user"
+    app_id = request.app[SETTINGS_KEY].discord_application_id or request.app[APPLICATION_ID_KEY]()
+    if app_id is None:  # bot not logged in yet (just started, or Discord unreachable)
+        return web.FileResponse(
+            STATIC / "install-unavailable.html",
+            status=503,
+            headers={"Content-Type": "text/html; charset=utf-8", "Retry-After": str(INSTALL_RETRY_SEC)},
+        )
+    raise web.HTTPFound(install_url(app_id, kind))
+
+
+def create_app(
+    settings: Settings, store: Store, application_id: Callable[[], int | None] = lambda: None
+) -> web.Application:
     app = web.Application(middlewares=[security_headers], client_max_size=4096)
     app[SETTINGS_KEY] = settings
     app[STORE_KEY] = store
     app[LIMITER_KEY] = RateLimiter(settings.resolve_rate_per_min)
+    app[APPLICATION_ID_KEY] = application_id
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/", _page("index.html"))
+    app.router.add_get("/install", install)
     app.router.add_get("/d", _page("d.html"))
     app.router.add_get("/privacy", _page("privacy.html"))
     app.router.add_get("/terms", _page("terms.html"))

@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     discord_token: SecretStr
     public_base_url: str
+    # For the /install link. The bot learns it at login; set it to serve the link before that.
+    discord_application_id: int | None = Field(None, ge=1)
     web_host: str = "0.0.0.0"  # noqa: S104 - inside the container; compose publishes on 127.0.0.1 only
     web_port: int = Field(8080, ge=1, le=65535)
 
@@ -45,6 +47,11 @@ class Settings(BaseSettings):
         if not parts.hostname or parts.query or parts.fragment:
             raise ValueError("must be a bare origin/base path, without query or fragment")
         return v.rstrip("/")
+
+    @field_validator("discord_application_id", mode="before")
+    @classmethod
+    def _optional_id(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v  # `DISCORD_APPLICATION_ID=` means unset
 
     @field_validator("media_types", mode="before")
     @classmethod
