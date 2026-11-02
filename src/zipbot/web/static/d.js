@@ -38,8 +38,11 @@ const SHARE_TYPES = {
 const RISKY = new Set(
   ("exe msi msix appx appxbundle bat cmd com scr pif cpl msc ps1 psm1 ps1xml vb vbs vbe js jse mjs ws wsf wsh " +
     "hta html htm shtml xhtml xht mht mhtml svg svgz lnk url scf inf reg dll sys jar apk xapk sh bash command " +
-    "app pkg dmg deb rpm appimage desktop iso img vhd vhdx chm application gadget docm xlsm pptm").split(" "),
+    "app pkg dmg deb rpm appimage desktop iso img vhd vhdx chm application gadget docm xlsm pptm " +
+    "py pyw jnlp xll xlam wsc sct msp mst rdp appref-ms settingcontent-ms library-ms searchconnector-ms").split(" "),
 );
+// Types a browser won't run or render as a page, for files whose extension says nothing.
+const SAFE_MIME = /^(image\/(?!svg)[\w.+-]+|video\/[\w.+-]+|audio\/[\w.+-]+|text\/plain)$/;
 // Names Chrome's File System Access refuses (Windows reserved, trailing dot, dangerous types).
 const FSA_BLOCKED_EXT = new Set(["lnk", "url", "scf", "local", "ini", "cfg", "manifest", "dll"]);
 const RESERVED = /^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$/i;
@@ -102,9 +105,24 @@ function splitPath(name) {
   return m ? { folder: m[1], base: m[2] } : { folder: "", base: name };
 }
 
+// The last dotted segment, hyphens included (".appref-ms"); "" when there is none.
 function extOf(name) {
-  const m = /\.([A-Za-z0-9]{1,16})$/.exec(name);
+  const m = /\.([A-Za-z0-9_-]{1,24})$/.exec(name);
   return m && m.index > 0 ? m[1].toLowerCase() : "";
+}
+
+// What the OS will make of the name: no bidi/control characters, no trailing dots or spaces
+// ("evil.exe." is an .exe on Windows). Doesn't rely on the server's sanitizer.
+function osName(name) {
+  return name.replace(/[\p{Cc}\p{Cf}]/gu, "").replace(/[. ]+$/, "");
+}
+
+function isRisky(item) {
+  const ext = extOf(osName(splitPath(item.name).base));
+  if (RISKY.has(ext)) return true;
+  if (ext && EXT_GROUP.has(ext)) return false;
+  // no or unknown extension: the browser may add one from the type (setup -> setup.exe)
+  return !SAFE_MIME.test((item.mime || "").split(";")[0].trim().toLowerCase());
 }
 
 function flatName(name) {
@@ -156,7 +174,11 @@ function showError(title, text, actions = []) {
 function showFatal(title, text, actions = []) {
   clearInterval(state.timer);
   showError(title, text, actions);
+  // Hiding a control that has focus would drop focus to <body>; hand it to the alert instead.
+  const lost = ["actions", "status-actions", "grid"].some((id) => $(id).contains(document.activeElement));
   $("actions").hidden = true;
+  $("status-actions").hidden = true; // a done/partial result may stay; its buttons can't work any more
+  if (lost) $("error").focus();
   $("progress").hidden = true;
   $("hint").hidden = true;
   if (!state.items.length) {
@@ -333,14 +355,29 @@ async function* fetchInOrder(indices) {
   }
 }
 
+const KEEP_URLS = 10; // blob URLs kept alive at once while saving file after file
+const liveUrls = [];
+
+function revoke(url) {
+  const at = liveUrls.indexOf(url);
+  if (at < 0) return;
+  liveUrls.splice(at, 1);
+  URL.revokeObjectURL(url);
+}
+
+// Always typed application/octet-stream, so the browser never derives an extension from the
+// CDN's type (an extensionless "setup" served as an .exe type must not become setup.exe).
 function saveBlob(blob, filename) {
+  const url = URL.createObjectURL(blob.slice(0, blob.size, "application/octet-stream"));
+  liveUrls.push(url);
   const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
+  a.href = url;
   a.download = filename;
   document.body.append(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 60_000);
+  while (liveUrls.length > KEEP_URLS) revoke(liveUrls[0]);
+  setTimeout(() => revoke(url), 60_000);
 }
 
 // counts: {ok, gone (not on Discord any more), failed (couldn't be written), renamed}
@@ -396,7 +433,7 @@ async function run(btn, fn) {
 
 async function saveEach(indices) {
   const total = indices.length;
-  const counts = { ok: 0, gone: 0 };
+  const counts = { ok: 0, gone: 0, failed: 0 };
   setProgress("Downloading files", 0, total);
   setTip(
     coarse()
@@ -404,17 +441,21 @@ async function saveEach(indices) {
       : "If your browser asks where to save every file, or saves only the first one, use Download ZIP instead.",
   );
   for await (const { i, res, error } of fetchInOrder(indices)) {
-    try {
-      if (error) throw error;
-      saveBlob(await res.blob(), flatName(state.items[i].name));
-      counts.ok++;
-      mark(i, true, "Saved");
-      await new Promise((r) => setTimeout(r, SAVE_GAP_MS));
-    } catch {
+    if (error) {
       counts.gone++;
       mark(i, false, "Unavailable");
+    } else {
+      try {
+        saveBlob(await res.blob(), flatName(state.items[i].name));
+        counts.ok++;
+        mark(i, true, "Saved");
+        await new Promise((r) => setTimeout(r, SAVE_GAP_MS));
+      } catch {
+        counts.failed++; // the connection broke mid-file: worth another try
+        mark(i, false, "Not saved");
+      }
     }
-    setProgress("Downloading files", counts.ok + counts.gone, total);
+    setProgress("Downloading files", counts.ok + counts.gone + counts.failed, total);
   }
   finish("Downloaded", counts, "Check your Downloads folder.");
 }
@@ -443,7 +484,9 @@ async function exists(dir, name) {
     await dir.getFileHandle(name);
     return true;
   } catch (e) {
-    return e.name !== "NotFoundError"; // TypeMismatchError: a folder has that name
+    if (e.name === "NotFoundError") return false;
+    if (e.name === "TypeMismatchError") return true; // a folder has that name
+    throw e; // e.g. permission revoked: fail this file now rather than probe 999 names
   }
 }
 
@@ -480,22 +523,26 @@ async function saveToFolder(picker, indices) {
       counts.gone++;
       mark(i, false, "Unavailable");
     } else {
+      let dir = null;
+      let created = null; // a name we created in this run, removed again if the write fails
       try {
         const { folder, base } = splitPath(state.items[i].name);
         if (!dirs.has(folder)) dirs.set(folder, await root.getDirectoryHandle(folder, { create: true }));
-        const dir = dirs.get(folder);
+        dir = dirs.get(folder);
         if (!taken.has(folder)) taken.set(folder, new Set());
         const safe = folderSafeName(base);
         const name = await freeName(dir, safe, taken.get(folder));
         const handle = await dir.getFileHandle(name, { create: true });
+        created = name;
         const writable = await handle.createWritable();
-        if (res.body) await res.body.pipeTo(writable);
+        if (res.body) await res.body.pipeTo(writable); // aborts the writable if the body fails
         else await writable.close();
         if (safe !== base) counts.renamed++;
         counts.ok++;
         mark(i, true, "Saved");
       } catch {
         res.body?.cancel().catch(() => {});
+        if (created) await dir.removeEntry(created).catch(() => {}); // no empty file left behind
         counts.failed++;
         mark(i, false, "Not saved");
       }
@@ -539,6 +586,42 @@ function zipEntries(indices, counts) {
   })();
 }
 
+// The picker already created the file; remove it when nothing useful went in (Chrome 110+).
+async function discard(handle) {
+  try {
+    await handle.remove();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Stream the ZIP into the picked file (flat memory). The writable is only closed when the
+// archive is complete and holds files; otherwise it's aborted, so no partial ZIP replaces it.
+async function streamZip(handle, indices, counts) {
+  const writable = await handle.createWritable();
+  try {
+    await downloadZip(zipEntries(indices, counts)).body.pipeTo(writable, { preventClose: true });
+  } catch (e) {
+    await writable.abort().catch(() => {});
+    const removed = await discard(handle);
+    $("progress").hidden = true;
+    notify("danger", "The ZIP couldn't be finished",
+      `${e.message || e.name}. ${removed ? "Nothing was saved." : "Delete the incomplete file you saved."} ` +
+        "Tap Download ZIP to try again.");
+    return setPhase("done");
+  }
+  if (counts.ok === 0) {
+    await writable.abort().catch(() => {});
+    const removed = await discard(handle);
+    finish("Zipped", counts);
+    if (!removed) $("status-text").textContent += " Delete the empty file you saved.";
+    return;
+  }
+  await writable.close();
+  finish("Zipped", counts, "The ZIP is where you saved it.");
+}
+
 async function saveZip(picker, indices, name) {
   const counts = { ok: 0, gone: 0 };
   if (picker) {
@@ -549,10 +632,7 @@ async function saveZip(picker, indices, name) {
       if (e.name === "AbortError") return cancelled();
       // anything else: fall back to the in-memory ZIP below
     }
-    if (handle) {
-      await downloadZip(zipEntries(indices, counts)).body.pipeTo(await handle.createWritable());
-      return finish("Zipped", counts, "The ZIP is where you saved it.");
-    }
+    if (handle) return streamZip(handle, indices, counts);
   }
   const blob = await downloadZip(zipEntries(indices, counts)).blob();
   if (counts.ok) saveBlob(blob, name);
@@ -614,8 +694,19 @@ function planShare() {
     bytes += size;
   });
   if (batch.length) batches.push(batch);
-  // files/indices: the prepared batch (File objects and the items they came from)
-  return { batches, excluded, next: 0, files: null, indices: [], ok: 0, gone: 0 };
+  // files/indices: the prepared batch (File objects and the items they came from).
+  // excluded/gone are Sets, so collecting a batch again never counts an item twice.
+  return { batches, excluded: new Set(excluded), gone: new Set(), next: 0, files: null, indices: [], ok: 0 };
+}
+
+async function readForShare(res) {
+  const declared = Number(res.headers.get("Content-Length"));
+  if (declared > SHARE_MAX_BYTES) {
+    res.body?.cancel().catch(() => {});
+    return null; // too big for any share sheet: don't download it into memory
+  }
+  const blob = await res.blob();
+  return blob.size > SHARE_MAX_BYTES ? null : blob;
 }
 
 // Fetch one batch into File objects with allowlisted types; files that turn out too big for
@@ -629,25 +720,33 @@ async function collectBatch(plan) {
   let done = 0;
   setProgress("Preparing files", 0, indices.length);
   for await (const { i, res, error } of fetchInOrder(indices)) {
-    if (error) {
-      plan.gone++;
-      mark(i, false, "Unavailable");
-    } else {
-      const blob = await res.blob();
-      if (blob.size > SHARE_MAX_BYTES) {
-        plan.excluded.push(i);
-      } else if (files.length && bytes + blob.size > SHARE_MAX_BYTES) {
-        overflow.push(i);
-      } else {
-        const name = flatName(state.items[i].name);
-        files.push(new File([blob], name, { type: shareType(name) }));
-        used.push(i);
-        bytes += blob.size;
+    let blob = null;
+    let unreadable = Boolean(error);
+    if (!error) {
+      try {
+        blob = await readForShare(res);
+        if (!blob) plan.excluded.add(i);
+      } catch {
+        unreadable = true; // the body broke off mid-way
       }
+    }
+    if (unreadable) {
+      plan.gone.add(i);
+      mark(i, false, "Unavailable");
+    } else if (blob && files.length && bytes + blob.size > SHARE_MAX_BYTES) {
+      overflow.push(i);
+    } else if (blob) {
+      const name = flatName(state.items[i].name);
+      files.push(new File([blob], name, { type: shareType(name) }));
+      used.push(i);
+      bytes += blob.size;
     }
     setProgress("Preparing files", ++done, indices.length);
   }
-  if (overflow.length) plan.batches.splice(plan.next + 1, 0, overflow);
+  if (overflow.length) {
+    plan.batches[plan.next] = indices.filter((i) => !overflow.includes(i));
+    plan.batches.splice(plan.next + 1, 0, overflow);
+  }
   plan.files = files.length ? files : null;
   plan.indices = used;
 }
@@ -671,8 +770,8 @@ function offerOthers(indices) {
 }
 
 function excludedText(plan) {
-  const n = plan.excluded.length;
-  return `${plural(n, "file")} can't go to the share sheet (type or size it doesn't take): ${namesList(plan.excluded)}.`;
+  const n = plan.excluded.size;
+  return `${plural(n, "file")} can't go to the share sheet (type or size it doesn't take): ${namesList([...plan.excluded])}.`;
 }
 
 function resetShare() {
@@ -721,20 +820,30 @@ async function shareNext() {
   setPhase("ready");
 }
 
+// An unexpected failure drops the plan, so the next tap starts over cleanly.
+async function shareSafely() {
+  try {
+    await shareNext();
+  } catch (e) {
+    resetShare();
+    throw e;
+  }
+}
+
 function shareDone(plan) {
   resetShare();
-  if (plan.ok === 0 && plan.gone === 0) {
+  if (plan.ok === 0 && plan.gone.size === 0) {
     $("progress").hidden = true;
     notify("info", "These files can't be shared", `${excludedText(plan)} Download them instead.`,
-      offerOthers(plan.excluded));
+      offerOthers([...plan.excluded]));
     return setPhase("ready");
   }
-  finish("Shared", { ok: plan.ok, gone: plan.gone });
-  if (plan.excluded.length) {
+  finish("Shared", { ok: plan.ok, gone: plan.gone.size });
+  if (plan.excluded.size) {
     const box = $("status-text");
     box.textContent = [box.textContent, excludedText(plan)].filter(Boolean).join(" ");
     box.hidden = false;
-    $("status-actions").replaceChildren(...offerOthers(plan.excluded));
+    $("status-actions").replaceChildren(...offerOthers([...plan.excluded]));
     $("status-actions").hidden = false;
   }
 }
@@ -747,7 +856,7 @@ function arrangeButtons() {
 }
 
 function riskyItems() {
-  return state.items.flatMap((it, i) => (RISKY.has(extOf(it.name)) ? [i] : []));
+  return state.items.flatMap((it, i) => (isRisky(it) ? [i] : []));
 }
 
 function autoStart(action) {
@@ -818,7 +927,7 @@ async function main() {
   $("actions").hidden = false;
   $("btn-files").addEventListener("click", () => downloadAll());
   $("btn-zip").addEventListener("click", () => downloadZipOf());
-  $("btn-share").addEventListener("click", () => run($("btn-share"), shareNext));
+  $("btn-share").addEventListener("click", () => run($("btn-share"), shareSafely));
   renderSummary();
   if (state.expired) return;
   state.timer = setInterval(renderSummary, 1000);
