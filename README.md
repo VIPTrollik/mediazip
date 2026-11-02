@@ -56,11 +56,12 @@ file (PDFs, archives, files without an extension...); `image,video` (any of `ima
 `audio`) limits links to those. Embeds (link previews, GIFs) only ever count as images or
 videos.
 
-`TRUSTED_PROXIES` (default `127.0.0.1,172.16.0.0/12`) lists the peers whose
-`X-Forwarded-For` header is believed, for per-client rate limiting. With nginx on the host
-the container sees the Docker bridge gateway as the peer; check it with
-`docker network inspect <project>_default` and narrow the setting to that address if other
-containers on the host could reach port 8080.
+`TRUSTED_PROXIES` (default `127.0.0.1/32`) lists the peers whose `X-Forwarded-For` header
+is believed, for per-client rate limiting. With nginx on the host the container sees the
+Docker bridge gateway as the peer. `docker-compose.yml` uses a fixed `zipbot` network with
+gateway `172.30.88.1` and sets `TRUSTED_PROXIES=127.0.0.1,172.30.88.1` for you. Other Docker
+setups must set it to their own bridge gateway (`docker network inspect <network>`);
+otherwise all clients share one rate-limit bucket.
 
 ## 3. Run
 
