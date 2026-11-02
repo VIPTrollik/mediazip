@@ -29,9 +29,9 @@ class Settings(BaseSettings):
     dm_debounce_sec: float = Field(8, ge=0, le=60)
     max_active_links_per_user: int = Field(20, ge=1, le=1000)
     resolve_rate_per_min: int = Field(30, ge=1, le=10_000)
+    # Peers whose X-Forwarded-For is believed: loopback only; docker-compose.yml adds its gateway.
     trusted_proxies: Annotated[tuple[IPv4Network | IPv6Network, ...], NoDecode] = (
         ip_network("127.0.0.1/32"),
-        ip_network("172.16.0.0/12"),
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 

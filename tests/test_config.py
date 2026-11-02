@@ -26,7 +26,8 @@ def test_defaults(env: pytest.MonkeyPatch) -> None:
     assert s.media_types == {"all"}  # any file type (v0.1)
     assert s.all_media
     assert s.link_ttl_min == 60
-    assert any(ip_address("172.18.0.1") in net for net in s.trusted_proxies)
+    assert [str(n) for n in s.trusted_proxies] == ["127.0.0.1/32"]  # compose adds its gateway
+    assert not any(ip_address("172.18.0.1") in net for net in s.trusted_proxies)
 
 
 def test_media_only_opt_out(env: pytest.MonkeyPatch) -> None:

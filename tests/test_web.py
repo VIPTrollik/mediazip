@@ -114,6 +114,14 @@ async def test_resolve_rejects_non_json(client: Any) -> None:
     assert (await client.get("/api/resolve")).status == 405
 
 
+@pytest.mark.parametrize("body", [b"[" * 4000, b'{"token": "\xff"}', b"\xef\xbb\xbf\xff"])
+async def test_resolve_unparseable_json_is_400(client: Any, body: bytes) -> None:
+    # "[[[[…" makes json.loads raise RecursionError (not ValueError); it must not become a 500.
+    resp = await client.post("/api/resolve", data=body, headers={"Content-Type": "application/json"})
+    assert resp.status == 400
+    assert await resp.json() == {"error": "bad_request"}
+
+
 async def test_resolve_body_size_limit(client: Any) -> None:
     resp = await client.post("/api/resolve", json={"token": "x" * 10_000})
     assert resp.status == 413
@@ -184,16 +192,30 @@ def _req(remote: str, xff: str | None = None) -> Any:
 @pytest.mark.parametrize(
     ("remote", "xff", "expected"),
     [
-        ("172.18.0.1", "203.0.113.9", "203.0.113.9"),  # docker bridge → trusted
-        ("172.18.0.1", "1.1.1.1, 203.0.113.9", "203.0.113.9"),  # right-most hop
-        ("172.18.0.1", "garbage", "172.18.0.1"),
+        ("172.30.88.1", "203.0.113.9", "203.0.113.9"),  # compose gateway → trusted
+        ("172.30.88.1", "1.1.1.1, 203.0.113.9", "203.0.113.9"),  # right-most hop
+        ("172.30.88.1", "garbage", "172.30.88.1"),
         ("8.8.8.8", "203.0.113.9", "8.8.8.8"),  # untrusted peer can't spoof
-        ("172.18.0.1", None, "172.18.0.1"),
+        ("172.30.88.1", None, "172.30.88.1"),
         ("not-an-ip", "203.0.113.9", "not-an-ip"),
+        # dual-stack socket (WEB_HOST=::) reports IPv4 peers as IPv4-mapped IPv6
+        ("::ffff:172.30.88.1", "203.0.113.9", "203.0.113.9"),
+        ("::ffff:172.30.88.1", "::ffff:203.0.113.9", "203.0.113.9"),
+        ("::ffff:8.8.8.8", "203.0.113.9", "8.8.8.8"),
+        ("::ffff:8.8.8.8", None, "8.8.8.8"),
     ],
 )
 def test_client_ip(settings: Settings, remote: str, xff: str | None, expected: str) -> None:
-    assert client_ip(_req(remote, xff), settings) == expected
+    s = settings.model_copy(
+        update={"trusted_proxies": (ip_network("127.0.0.1/32"), ip_network("172.30.88.1/32"))}
+    )
+    assert client_ip(_req(remote, xff), s) == expected
+
+
+def test_client_ip_default_trusts_loopback_only(settings: Settings) -> None:
+    assert client_ip(_req("127.0.0.1", "203.0.113.9"), settings) == "203.0.113.9"
+    assert client_ip(_req("::ffff:127.0.0.1", "203.0.113.9"), settings) == "203.0.113.9"
+    assert client_ip(_req("172.18.0.1", "203.0.113.9"), settings) == "172.18.0.1"  # other containers
 
 
 def test_client_ip_custom_proxies(settings: Settings) -> None:

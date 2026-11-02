@@ -7,7 +7,7 @@ import re
 import time
 from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
-from ipaddress import IPv6Address, ip_address, ip_network
+from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
 
 from aiohttp import web
@@ -49,15 +49,23 @@ STORE_KEY = web.AppKey("store", Store)
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
 
+def parse_ip(value: str) -> IPv4Address | IPv6Address | None:
+    """IPv4-mapped IPv6 (`::ffff:a.b.c.d`, what a dual-stack `WEB_HOST=::` socket reports) → IPv4."""
+    try:
+        addr = ip_address(value)
+    except ValueError:
+        return None
+    if isinstance(addr, IPv6Address) and addr.ipv4_mapped is not None:
+        return addr.ipv4_mapped
+    return addr
+
+
 def limit_key(ip: str) -> str:
     """IPv6 clients usually own a whole /64, so limit per /64 rather than per address."""
-    try:
-        addr = ip_address(ip)
-    except ValueError:
+    addr = parse_ip(ip)
+    if addr is None:
         return ip
     if isinstance(addr, IPv6Address):
-        if addr.ipv4_mapped is not None:
-            return str(addr.ipv4_mapped)
         return str(ip_network(f"{addr}/64", strict=False))
     return str(addr)
 
@@ -94,19 +102,16 @@ LIMITER_KEY = web.AppKey("limiter", RateLimiter)
 
 def client_ip(request: web.Request, settings: Settings) -> str:
     peer = request.remote or ""
-    try:
-        trusted = any(ip_address(peer) in net for net in settings.trusted_proxies)
-    except ValueError:
-        trusted = False
+    addr = parse_ip(peer)
+    if addr is None:
+        return peer
     forwarded = request.headers.get("X-Forwarded-For", "")
-    if trusted and forwarded:
+    if forwarded and any(addr in net for net in settings.trusted_proxies):
         # nginx overwrites the header with $remote_addr; take the right-most hop regardless.
-        candidate = forwarded.rsplit(",", 1)[-1].strip()
-        try:
-            return str(ip_address(candidate))
-        except ValueError:
-            return peer
-    return peer
+        candidate = parse_ip(forwarded.rsplit(",", 1)[-1].strip())
+        if candidate is not None:
+            return str(candidate)
+    return str(addr)
 
 
 @web.middleware
@@ -135,7 +140,7 @@ async def resolve(request: web.Request) -> web.Response:
         return web.json_response({"error": "bad_request"}, status=415)
     try:
         payload = await request.json()
-    except ValueError:
+    except (ValueError, RecursionError):  # malformed JSON or bad encoding, or nesting too deep to parse
         return web.json_response({"error": "bad_request"}, status=400)
     token = payload.get("token") if isinstance(payload, dict) else None
     if not isinstance(token, str) or not TOKEN_RE.fullmatch(token):
