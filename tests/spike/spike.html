@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ZIP spike</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; max-width: 720px; }
+  textarea { width: 100%; min-height: 8em; font-size: 12px; }
+  button { font-size: 16px; padding: 10px 14px; margin: 4px 4px 4px 0; }
+  pre { background: #f2f2f2; padding: 8px; white-space: pre-wrap; word-break: break-all; font-size: 12px; }
+</style>
+</head>
+<body>
+<h1>Phase 0 spike</h1>
+<p>One file URL per line (Discord CDN or the local mock CDN).</p>
+<textarea id="urls"></textarea>
+<div>
+  <button id="zip" type="button">Download ZIP</button>
+  <button id="share-files" type="button">Share files</button>
+  <button id="share-zip" type="button">Share ZIP</button>
+  <button id="singles" type="button">Download each file</button>
+  <button id="mock" type="button">Load mock URLs</button>
+</div>
+<h2>Environment</h2>
+<pre id="env"></pre>
+<h2>Log</h2>
+<pre id="log"></pre>
+<script type="module" src="spike.js"></script>
+</body>
+</html>

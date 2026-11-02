@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "zipbot/resolve-response/v1",
+  "title": "POST /api/resolve 200 response (frozen at G2)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["expires_at", "items"],
+  "properties": {
+    "expires_at": { "type": "integer", "minimum": 0, "description": "Unix seconds" },
+    "items": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "thumb", "name", "kind", "mime", "size", "width", "height", "duration"],
+        "properties": {
+          "url": { "$ref": "#/$defs/discordUrl" },
+          "thumb": { "oneOf": [{ "$ref": "#/$defs/discordUrl" }, { "type": "null" }] },
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 124,
+            "pattern": "^(\\d{2}/)?[^/\\\\:*?\"<>|\\u0000-\\u001f]+$",
+            "description": "Relative path inside the ZIP; optional 2-digit folder per source message"
+          },
+          "kind": { "enum": ["image", "video", "audio", null] },
+          "mime": { "type": ["string", "null"] },
+          "size": { "type": ["integer", "null"], "minimum": 0 },
+          "width": { "type": ["integer", "null"], "minimum": 0 },
+          "height": { "type": ["integer", "null"], "minimum": 0 },
+          "duration": { "type": ["number", "null"], "minimum": 0 }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "discordUrl": {
+      "type": "string",
+      "maxLength": 2048,
+      "pattern": "^https://(cdn\\.discordapp\\.com|media\\.discordapp\\.net|images-ext-[12]\\.discordapp\\.net)/"
+    }
+  }
+}

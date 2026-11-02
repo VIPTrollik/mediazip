@@ -1,0 +1,115 @@
+{
+  "version": 1,
+  "type": 2,
+  "token": "REDACTED",
+  "member": {
+    "user": {
+      "username": "user",
+      "public_flags": 0,
+      "primary_guild": null,
+      "id": "100000000000000001",
+      "global_name": "user",
+      "display_name_styles": null,
+      "discriminator": "0000",
+      "collectibles": null,
+      "clan": null,
+      "avatar_decoration_data": null,
+      "avatar": null
+    },
+    "unusual_dm_activity_until": null,
+    "roles": [
+      "100000000000000002"
+    ],
+    "premium_since": null,
+    "permissions": "100000000000000003",
+    "pending": false,
+    "nick": null,
+    "mute": false,
+    "joined_at": "2020-01-01T00:00:00+00:00",
+    "flags": 0,
+    "deaf": false,
+    "communication_disabled_until": null,
+    "banner": null,
+    "avatar": null
+  },
+  "locale": "en-GB",
+  "id": "100000000000000017",
+  "guild_locale": "en-US",
+  "guild_id": "100000000000000005",
+  "guild": {
+    "locale": "en-US",
+    "id": "100000000000000005",
+    "features": [
+      "NEW_THREAD_PERMISSIONS",
+      "COMMUNITY",
+      "THREADS_ENABLED",
+      "NEWS"
+    ]
+  },
+  "entitlements": [],
+  "entitlement_sku_ids": [],
+  "data": {
+    "type": 3,
+    "target_id": "100000000000000016",
+    "resolved": {
+      "messages": {
+        "100000000000000016": {
+          "type": 0,
+          "tts": false,
+          "timestamp": "2026-11-02T18:13:32.919000+00:00",
+          "pinned": false,
+          "mentions": [],
+          "mention_roles": [],
+          "mention_everyone": false,
+          "id": "100000000000000016",
+          "flags": 0,
+          "embeds": [],
+          "edited_timestamp": null,
+          "content": "Spike: text only, no media",
+          "components": [],
+          "channel_id": "100000000000000007",
+          "author": {
+            "username": "user",
+            "public_flags": 0,
+            "primary_guild": null,
+            "id": "100000000000000008",
+            "global_name": null,
+            "display_name_styles": null,
+            "discriminator": "0000",
+            "collectibles": null,
+            "clan": null,
+            "bot": true,
+            "avatar_decoration_data": null,
+            "avatar": null
+          },
+          "attachments": []
+        }
+      }
+    },
+    "name": "Dump payload",
+    "id": "100000000000000014"
+  },
+  "context": 0,
+  "channel_id": "100000000000000007",
+  "channel": {
+    "type": 0,
+    "topic": null,
+    "rate_limit_per_user": 0,
+    "position": 1,
+    "permissions": "100000000000000003",
+    "parent_id": "100000000000000015",
+    "nsfw": false,
+    "name": "channel",
+    "last_message_id": "100000000000000016",
+    "id": "100000000000000007",
+    "guild_id": "100000000000000005",
+    "flags": 0
+  },
+  "authorizing_integration_owners": {
+    "1": "100000000000000001",
+    "0": "100000000000000005"
+  },
+  "attachment_size_limit": 20971520,
+  "application_id": "100000000000000008",
+  "app_permissions": "2222085186637377"
+}

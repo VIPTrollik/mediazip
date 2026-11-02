@@ -1,0 +1,76 @@
+:root {
+  --bg: #f6f7f9;
+  --fg: #16181d;
+  --muted: #5d6470;
+  --card: #ffffff;
+  --border: #dde1e7;
+  --accent: #5865f2;
+  --accent-fg: #ffffff;
+  --error-bg: #fdecec;
+  --error-fg: #8a1c1c;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1e1f22;
+    --fg: #eceef1;
+    --muted: #a3a9b3;
+    --card: #2b2d31;
+    --border: #3a3d44;
+    --error-bg: #3b1f22;
+    --error-fg: #ffb4b4;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+main { max-width: 960px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.5rem; margin: 8px 0 4px; }
+.muted { color: var(--muted); }
+.buttons { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+button {
+  font: inherit;
+  font-weight: 600;
+  padding: 12px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--card);
+  color: var(--fg);
+  cursor: pointer;
+  min-height: 48px;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+button:disabled { opacity: 0.55; cursor: default; }
+progress { width: 100%; height: 10px; }
+.error { background: var(--error-bg); color: var(--error-fg); border-radius: 10px; padding: 4px 16px; margin: 16px 0; }
+.grid {
+  list-style: none;
+  padding: 0;
+  margin: 16px 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 10px;
+}
+.grid li {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.thumb { position: relative; aspect-ratio: 1; background: var(--border); }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.badge {
+  position: absolute; right: 6px; bottom: 6px;
+  background: rgba(0, 0, 0, 0.7); color: #fff; font-size: 12px; border-radius: 6px; padding: 1px 6px;
+}
+.meta { padding: 6px 8px; font-size: 13px; overflow-wrap: anywhere; }
+.meta a { color: inherit; }
+.grid li.failed { border-color: var(--error-fg); }
+.grid li.done .meta::after { content: " ✓"; color: #2e9e5b; }
+footer { font-size: 13px; margin: 24px 0; }

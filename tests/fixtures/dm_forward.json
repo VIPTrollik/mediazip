@@ -1,0 +1,121 @@
+{
+  "type": 0,
+  "tts": false,
+  "timestamp": "2026-11-02T18:17:52.027000+00:00",
+  "pinned": false,
+  "nonce": "100000000000000018",
+  "message_snapshots": [
+    {
+      "message": {
+        "type": 0,
+        "timestamp": "2026-11-02T18:13:32.180000+00:00",
+        "mentions": [],
+        "flags": 0,
+        "embeds": [],
+        "edited_timestamp": null,
+        "content": "Spike: 3 images + gif + video",
+        "components": [],
+        "attachments": [
+          {
+            "width": 800,
+            "url": "https://cdn.discordapp.com/attachments/100000000000000019/100000000000000020/test-1.jpg?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "size": 8912,
+            "proxy_url": "https://media.discordapp.net/attachments/100000000000000019/100000000000000020/test-1.jpg?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "placeholder_version": 1,
+            "placeholder": null,
+            "id": "100000000000000020",
+            "height": 600,
+            "filename": "test-1.jpg",
+            "content_type": "image/jpeg",
+            "content_scan_version": 4
+          },
+          {
+            "width": 800,
+            "url": "https://cdn.discordapp.com/attachments/100000000000000019/100000000000000021/test-2.jpg?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "size": 8828,
+            "proxy_url": "https://media.discordapp.net/attachments/100000000000000019/100000000000000021/test-2.jpg?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "placeholder_version": 1,
+            "placeholder": null,
+            "id": "100000000000000021",
+            "height": 600,
+            "filename": "test-2.jpg",
+            "content_type": "image/jpeg",
+            "content_scan_version": 4
+          },
+          {
+            "width": 800,
+            "url": "https://cdn.discordapp.com/attachments/100000000000000019/100000000000000022/test-3.jpg?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "size": 8929,
+            "proxy_url": "https://media.discordapp.net/attachments/100000000000000019/100000000000000022/test-3.jpg?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "placeholder_version": 1,
+            "placeholder": null,
+            "id": "100000000000000022",
+            "height": 600,
+            "filename": "test-3.jpg",
+            "content_type": "image/jpeg",
+            "content_scan_version": 4
+          },
+          {
+            "width": 200,
+            "url": "https://cdn.discordapp.com/attachments/100000000000000019/100000000000000023/anim.gif?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "size": 3623,
+            "proxy_url": "https://media.discordapp.net/attachments/100000000000000019/100000000000000023/anim.gif?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "placeholder_version": 1,
+            "placeholder": null,
+            "id": "100000000000000023",
+            "height": 200,
+            "flags": 32,
+            "filename": "anim.gif",
+            "content_type": "image/gif",
+            "content_scan_version": 4
+          },
+          {
+            "width": 640,
+            "url": "https://cdn.discordapp.com/attachments/100000000000000019/100000000000000024/clip.mp4?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "size": 22362,
+            "proxy_url": "https://media.discordapp.net/attachments/100000000000000019/100000000000000024/clip.mp4?ex=6aea254f&is=6ae8d3cf&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+            "placeholder_version": 1,
+            "placeholder": null,
+            "id": "100000000000000024",
+            "height": 360,
+            "filename": "clip.mp4",
+            "duration_secs": 3.0,
+            "content_type": "video/mp4",
+            "content_scan_version": 4
+          }
+        ]
+      }
+    }
+  ],
+  "message_reference": {
+    "type": 1,
+    "message_id": "100000000000000006",
+    "guild_id": "100000000000000005",
+    "channel_id": "100000000000000007"
+  },
+  "mentions": [],
+  "mention_roles": [],
+  "mention_everyone": false,
+  "id": "100000000000000025",
+  "flags": 16384,
+  "embeds": [],
+  "edited_timestamp": null,
+  "content": "",
+  "components": [],
+  "channel_type": 1,
+  "channel_id": "100000000000000019",
+  "author": {
+    "username": "user",
+    "public_flags": 0,
+    "primary_guild": null,
+    "id": "100000000000000001",
+    "global_name": "user",
+    "display_name_styles": null,
+    "discriminator": "0000",
+    "collectibles": null,
+    "clan": null,
+    "avatar_decoration_data": null,
+    "avatar": null
+  },
+  "attachments": []
+}

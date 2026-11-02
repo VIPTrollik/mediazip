@@ -1,0 +1,34 @@
+services:
+  zipbot:
+    build: .
+    image: zipbot:local
+    env_file: .env
+    environment:
+      # Only the network gateway (what the host's nginx connects from) may set X-Forwarded-For.
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,172.30.88.1}
+    networks:
+      - zipbot
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"  # only nginx on the host reaches it
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    pids_limit: 128
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  zipbot:
+    ipam:
+      config:
+        - subnet: 172.30.88.0/24
+          gateway: 172.30.88.1
