@@ -11,7 +11,7 @@ from discord.ext import commands
 
 from zipbot.config import Settings
 from zipbot.store import Store
-from zipbot.views import DYNAMIC_ITEMS
+from zipbot.views import COOLDOWN_TEXT, DYNAMIC_ITEMS, Panels, UserCooldown
 
 log = logging.getLogger(__name__)
 
@@ -63,6 +63,8 @@ class ZipBot(commands.Bot):
         )
         self.settings = settings
         self.store = store
+        self.panels = Panels()  # each user's one live reply panel
+        self.button_cooldown = UserCooldown()
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:
@@ -86,7 +88,7 @@ class ZipBot(commands.Bot):
         self, interaction: discord.Interaction, error: app_commands.AppCommandError
     ) -> None:
         if isinstance(error, app_commands.CommandOnCooldown):
-            text = f"You're going a bit fast — try again in {error.retry_after:.0f} s."
+            text = COOLDOWN_TEXT.format(error.retry_after)
         else:
             log.error("command failed: %s", type(getattr(error, "original", error)).__name__)
             text = "Something went wrong. Please try again."

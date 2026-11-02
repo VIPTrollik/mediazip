@@ -20,7 +20,14 @@ from zipbot.naming import assign_names
 
 CDN_SAFETY_SEC = 5 * 60  # links die this long before the first CDN URL does
 MIN_LINK_SEC = 60
-MAX_LINKS_TOTAL = 50_000  # memory bound; oldest links are evicted first
+# Memory bound for all links together. An item costs about 0.9 KB (two signed URLs, the name and
+# its ZIP name; measured with tracemalloc), up to ~2 KB with very long names: 40k items stay
+# under ~80 MB of the container's 256 MB. When full, new links are refused, so nobody can evict
+# other users' links (security review v0 #3).
+MAX_ITEMS_TOTAL = 40_000
+# Per user, across their live links (a link plus the basket link at the default 100 files
+# each): a user's own oldest links go first, so one account holds at most ~1.25% of the total.
+MAX_ITEMS_PER_USER = 500
 
 
 def token_hash(token: str) -> str:
@@ -28,7 +35,7 @@ def token_hash(token: str) -> str:
 
 
 class LinkError(Exception):
-    """The items cannot be turned into a link (none, too many, about to expire)."""
+    """The items cannot be turned into a link (none, too many, about to expire, store full)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,6 +63,9 @@ class BasketEntry:
 class Basket:
     entries: list[BasketEntry] = field(default_factory=list)
     touched_at: float = 0.0
+    link_id: str | None = None  # the one live basket link; replaced when a new one is made
+    version: int = 0  # bumped whenever entries change
+    link_version: int = -1  # `version` when link_id was made
 
     @property
     def file_count(self) -> int:
@@ -95,6 +105,7 @@ class Store:
         self.max_active_links_per_user = max_active_links_per_user
         self.clock = clock
         self._links: OrderedDict[str, LinkRecord] = OrderedDict()  # token hash → record, oldest first
+        self._items = 0  # sum of len(record.items) over _links
         self._baskets: dict[int, Basket] = {}
 
     @classmethod
@@ -125,11 +136,22 @@ class Store:
             raise LinkError("Discord file links expire too soon")
 
         self.sweep()
-        mine = [h for h, r in self._links.items() if r.owner_id == owner_id]
-        for h in mine[: max(0, len(mine) - self.max_active_links_per_user + 1)]:
-            del self._links[h]
-        while len(self._links) >= MAX_LINKS_TOTAL:
-            self._links.popitem(last=False)
+        mine = [h for h, r in self._links.items() if r.owner_id == owner_id]  # oldest first
+        held = sum(len(self._links[h].items) for h in mine)
+        budget = max(MAX_ITEMS_PER_USER, 2 * self.max_files_per_link)  # always fits link + basket
+        evict: list[str] = []
+        freed = 0
+        for h in mine:
+            if len(mine) - len(evict) < self.max_active_links_per_user and (
+                held - freed + len(items) <= budget
+            ):
+                break
+            evict.append(h)
+            freed += len(self._links[h].items)
+        if self._items - freed + len(items) > MAX_ITEMS_TOTAL:
+            raise LinkError("the bot is busy right now, please try again in a few minutes")
+        for h in evict:
+            self._drop(h)
 
         token = secrets.token_urlsafe(32)
         record = LinkRecord(
@@ -142,7 +164,11 @@ class Store:
             message_key=message_key,
         )
         self._links[token_hash(token)] = record
+        self._items += len(record.items)
         return token, record
+
+    def _drop(self, h: str) -> None:
+        self._items -= len(self._links.pop(h).items)
 
     def resolve(self, token: str) -> LinkRecord | None:
         h = token_hash(token)
@@ -150,7 +176,7 @@ class Store:
         if record is None:
             return None
         if record.expires_at <= self.clock():
-            del self._links[h]
+            self._drop(h)
             return None
         return record
 
@@ -164,7 +190,7 @@ class Store:
     def revoke(self, link_id: str, owner_id: int) -> bool:
         for h, record in self._links.items():
             if record.link_id == link_id and record.owner_id == owner_id:
-                del self._links[h]
+                self._drop(h)
                 return True
         return False
 
@@ -198,13 +224,36 @@ class Store:
             result = AddResult.FULL_FILES
         else:
             b.entries.append(BasketEntry(message_key, tuple(items)))
+            b.version += 1
             result = AddResult.ADDED
         if not b.entries:
             self._baskets.pop(user_id, None)
         return result, b
 
+    def basket_link(self, user_id: int, token: str | None = None) -> tuple[str, LinkRecord]:
+        """A link for the whole basket. `token` (a basket link a panel already shows) is kept if
+        it is still the basket's live link and the basket hasn't changed since; otherwise the
+        previous basket link is revoked and a new one made, so each user has at most one and
+        re-rendering a panel doesn't use up their link cap."""
+        b = self.basket(user_id)
+        if b is None or not b.entries:
+            raise LinkError("your basket is empty")
+        if token and b.link_version == b.version:
+            current = self.resolve(token)
+            if current and current.link_id == b.link_id and current.owner_id == user_id:
+                return token, current
+        if b.link_id:
+            self.revoke(b.link_id, user_id)
+            b.link_id = None
+        token, record = self.create_link(user_id, b.items())
+        b.link_id, b.link_version = record.link_id, b.version
+        return token, record
+
     def clear_basket(self, user_id: int) -> bool:
-        return self._baskets.pop(user_id, None) is not None
+        b = self._baskets.pop(user_id, None)
+        if b is not None and b.link_id:
+            self.revoke(b.link_id, user_id)
+        return b is not None
 
     # --- housekeeping ------------------------------------------------------------------
 
@@ -212,7 +261,7 @@ class Store:
         now = self.clock()
         dead = [h for h, r in self._links.items() if r.expires_at <= now]
         for h in dead:
-            del self._links[h]
+            self._drop(h)
         stale = [u for u, b in self._baskets.items() if b.touched_at + self.basket_ttl_sec <= now]
         for u in stale:
             del self._baskets[u]
@@ -220,3 +269,7 @@ class Store:
 
     def __len__(self) -> int:
         return len(self._links)
+
+    @property
+    def item_count(self) -> int:
+        return self._items

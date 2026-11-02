@@ -1,20 +1,24 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from ipaddress import ip_network
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from urllib.parse import parse_qs, urlsplit
 
 import jsonschema
 import pytest
 
 from helpers import EX, item
+from zipbot.__main__ import check_application_id
 from zipbot.config import Settings
 from zipbot.store import Store
 from zipbot.web import app as web_app
-from zipbot.web.app import SECURITY_HEADERS, RateLimiter, client_ip, create_app, limit_key
+from zipbot.web.app import SECURITY_HEADERS, ApplicationId, RateLimiter, client_ip, create_app, limit_key
 
 SCHEMA = json.loads((Path(__file__).parent / "contract" / "resolve.schema.json").read_text(encoding="utf-8"))
 
@@ -63,7 +67,12 @@ async def test_pages_and_static(client: Any) -> None:
 
 
 @pytest.mark.parametrize(
-    ("path", "ctype"), [("/static/icons.svg", "image/svg+xml"), ("/static/style.css", "text/css")]
+    ("path", "ctype"),
+    [
+        ("/static/icons.svg", "image/svg+xml"),
+        ("/static/style.css", "text/css"),
+        ("/static/landing.css", "text/css"),
+    ],
 )
 async def test_theme_assets_served_with_security_headers(client: Any, path: str, ctype: str) -> None:
     resp = await client.get(path)
@@ -71,6 +80,160 @@ async def test_theme_assets_served_with_security_headers(client: Any, path: str,
     assert resp.headers["Content-Type"].startswith(ctype)  # nosniff: a wrong type would break <use>/CSS
     for name, value in SECURITY_HEADERS.items():
         assert resp.headers[name] == value
+
+
+def _query(location: str) -> dict[str, list[str]]:
+    parts = urlsplit(location)
+    assert f"{parts.scheme}://{parts.netloc}{parts.path}" == "https://discord.com/oauth2/authorize"
+    return parse_qs(parts.query)
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/install", {"integration_type": ["1"], "scope": ["applications.commands"]}),
+        ("/install?type=user", {"integration_type": ["1"], "scope": ["applications.commands"]}),
+        ("/install?type=bogus", {"integration_type": ["1"], "scope": ["applications.commands"]}),
+        (
+            "/install?type=guild",
+            {"integration_type": ["0"], "scope": ["applications.commands bot"], "permissions": ["0"]},
+        ),
+    ],
+)
+async def test_install_redirects_to_discord(
+    aiohttp_client: Any, settings: Settings, store: Store, path: str, expected: dict[str, list[str]]
+) -> None:
+    client = await aiohttp_client(create_app(settings, store, application_id=lambda: 1234567890123))
+    resp = await client.get(path, allow_redirects=False)
+    assert resp.status == 302
+    assert _query(resp.headers["Location"]) == {"client_id": ["1234567890123"], **expected}
+    assert resp.headers["Content-Security-Policy"] == SECURITY_HEADERS["Content-Security-Policy"]
+
+
+class StubBot:
+    """Stands in for discord.Client: application_id is None until login."""
+
+    def __init__(self) -> None:
+        self.application_id: int | None = None
+        self.ready = asyncio.Event()
+
+    async def wait_until_ready(self) -> None:
+        await self.ready.wait()
+
+
+async def _install_location(client: Any) -> int | str:
+    resp = await client.get("/install", allow_redirects=False)
+    return _query(resp.headers["Location"])["client_id"][0] if resp.status == 302 else resp.status
+
+
+async def test_install_uses_bot_id_once_logged_in(
+    aiohttp_client: Any, settings: Settings, store: Store
+) -> None:
+    app_id = ApplicationId(None)
+    client = await aiohttp_client(create_app(settings, store, application_id=app_id))
+    assert await _install_location(client) == 503  # no client yet
+    bot = StubBot()
+    app_id.bot = bot
+    assert await _install_location(client) == 503  # client exists, not logged in
+    bot.application_id = 77
+    assert await _install_location(client) == "77"
+
+
+async def test_install_configured_id_is_the_pre_login_fallback(
+    aiohttp_client: Any, settings: Settings, store: Store
+) -> None:
+    s = settings.model_copy(update={"discord_application_id": 42})
+    app = create_app(s, store)  # default source: ApplicationId(DISCORD_APPLICATION_ID)
+    app_id = app[web_app.APPLICATION_ID_KEY]
+    assert isinstance(app_id, ApplicationId)
+    client = await aiohttp_client(app)
+    assert await _install_location(client) == "42"
+    bot = StubBot()
+    app_id.bot = bot
+    assert await _install_location(client) == "42"
+    bot.application_id = 77  # the real id wins after login
+    assert await _install_location(client) == "77"
+
+
+async def test_application_id_mismatch_warns_after_login(caplog: pytest.LogCaptureFixture) -> None:
+    app_id = ApplicationId(42)
+    bot = StubBot()
+    app_id.bot = bot
+    task = asyncio.create_task(check_application_id(cast(Any, bot), app_id))
+    await asyncio.sleep(0)
+    assert not task.done() and not caplog.records  # waits for login
+    bot.application_id = 77
+    bot.ready.set()
+    with caplog.at_level(logging.WARNING, logger="zipbot.web.app"):
+        await asyncio.wait_for(task, 1)
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "42" in record.getMessage() and "77" in record.getMessage()
+
+
+@pytest.mark.parametrize("configured", [None, 77])
+async def test_application_id_match_is_silent(
+    caplog: pytest.LogCaptureFixture, configured: int | None
+) -> None:
+    app_id = ApplicationId(configured)
+    bot = StubBot()
+    bot.application_id = 77
+    bot.ready.set()
+    app_id.bot = bot
+    with caplog.at_level(logging.WARNING):
+        await check_application_id(cast(Any, bot), app_id)
+    assert not caplog.records
+    assert app_id() == 77
+
+
+async def test_install_unavailable_before_login(client: Any) -> None:
+    resp = await client.get("/install?type=guild", allow_redirects=False)
+    assert resp.status == 503
+    assert resp.headers["Retry-After"] == "30"
+    assert resp.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert "not ready" in await resp.text()
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Range": "bytes=0-10"},
+        {"If-None-Match": "*"},
+        {"If-Modified-Since": "Fri, 01 Jan 2100 00:00:00 GMT"},
+        {"If-Range": "x", "Range": "bytes=5-"},
+    ],
+)
+async def test_install_503_ignores_range_and_conditional_headers(
+    client: Any, headers: dict[str, str]
+) -> None:
+    resp = await client.get("/install", headers=headers, allow_redirects=False)
+    assert resp.status == 503
+    assert "ETag" not in resp.headers and "Last-Modified" not in resp.headers
+    assert "Content-Range" not in resp.headers and "Accept-Ranges" not in resp.headers
+    assert (await resp.read()) == (web_app.STATIC / "install-unavailable.html").read_bytes()
+
+
+def test_install_url_encodes_scope_as_space() -> None:
+    url = web_app.install_url(7, "guild")
+    assert url == (
+        "https://discord.com/oauth2/authorize"
+        "?client_id=7&integration_type=0&scope=applications.commands%20bot&permissions=0"
+    )
+
+
+async def test_landing_page(client: Any) -> None:
+    resp = await client.get("/")
+    assert resp.status == 200
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+    html = await resp.text()
+    assert 'href="/install"' in html and 'href="/install?type=guild"' in html
+    assert "discord.com" not in html  # the install URL is built server-side from the application id
+    assert html.index('href="/static/style.css"') < html.index('href="/static/landing.css"')
+    assert 'href="/privacy"' in html and 'href="/terms"' in html
+    assert not re.search(r"<script|<style|\sstyle=|\son[a-z]+=", html)  # CSP: nothing inline
 
 
 def test_icon_sprite_is_self_contained() -> None:
@@ -112,6 +275,14 @@ async def test_resolve_rejects_non_json(client: Any) -> None:
     bad = await client.post("/api/resolve", data="{", headers={"Content-Type": "application/json"})
     assert bad.status == 400
     assert (await client.get("/api/resolve")).status == 405
+
+
+@pytest.mark.parametrize("body", [b"[" * 4000, b'{"token": "\xff"}', b"\xef\xbb\xbf\xff"])
+async def test_resolve_unparseable_json_is_400(client: Any, body: bytes) -> None:
+    # "[[[[…" makes json.loads raise RecursionError (not ValueError); it must not become a 500.
+    resp = await client.post("/api/resolve", data=body, headers={"Content-Type": "application/json"})
+    assert resp.status == 400
+    assert await resp.json() == {"error": "bad_request"}
 
 
 async def test_resolve_body_size_limit(client: Any) -> None:
@@ -184,16 +355,30 @@ def _req(remote: str, xff: str | None = None) -> Any:
 @pytest.mark.parametrize(
     ("remote", "xff", "expected"),
     [
-        ("172.18.0.1", "203.0.113.9", "203.0.113.9"),  # docker bridge → trusted
-        ("172.18.0.1", "1.1.1.1, 203.0.113.9", "203.0.113.9"),  # right-most hop
-        ("172.18.0.1", "garbage", "172.18.0.1"),
+        ("172.30.88.1", "203.0.113.9", "203.0.113.9"),  # compose gateway → trusted
+        ("172.30.88.1", "1.1.1.1, 203.0.113.9", "203.0.113.9"),  # right-most hop
+        ("172.30.88.1", "garbage", "172.30.88.1"),
         ("8.8.8.8", "203.0.113.9", "8.8.8.8"),  # untrusted peer can't spoof
-        ("172.18.0.1", None, "172.18.0.1"),
+        ("172.30.88.1", None, "172.30.88.1"),
         ("not-an-ip", "203.0.113.9", "not-an-ip"),
+        # dual-stack socket (WEB_HOST=::) reports IPv4 peers as IPv4-mapped IPv6
+        ("::ffff:172.30.88.1", "203.0.113.9", "203.0.113.9"),
+        ("::ffff:172.30.88.1", "::ffff:203.0.113.9", "203.0.113.9"),
+        ("::ffff:8.8.8.8", "203.0.113.9", "8.8.8.8"),
+        ("::ffff:8.8.8.8", None, "8.8.8.8"),
     ],
 )
 def test_client_ip(settings: Settings, remote: str, xff: str | None, expected: str) -> None:
-    assert client_ip(_req(remote, xff), settings) == expected
+    s = settings.model_copy(
+        update={"trusted_proxies": (ip_network("127.0.0.1/32"), ip_network("172.30.88.1/32"))}
+    )
+    assert client_ip(_req(remote, xff), s) == expected
+
+
+def test_client_ip_default_trusts_loopback_only(settings: Settings) -> None:
+    assert client_ip(_req("127.0.0.1", "203.0.113.9"), settings) == "203.0.113.9"
+    assert client_ip(_req("::ffff:127.0.0.1", "203.0.113.9"), settings) == "203.0.113.9"
+    assert client_ip(_req("172.18.0.1", "203.0.113.9"), settings) == "172.18.0.1"  # other containers
 
 
 def test_client_ip_custom_proxies(settings: Settings) -> None:

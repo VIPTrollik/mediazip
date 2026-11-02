@@ -8,9 +8,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
-from zipbot import handlers
+from zipbot import handlers, views
 from zipbot.cogs.context_menu import per_user_cooldown
-from zipbot.views import send_ephemeral
 
 if TYPE_CHECKING:
     from zipbot.bot import ZipBot
@@ -28,17 +27,18 @@ class BasketCog(
     @app_commands.command(name="show", description="Show what's in your basket")
     @per_user_cooldown
     async def show(self, interaction: discord.Interaction) -> None:
-        await send_ephemeral(interaction, *handlers.basket_show_reply(self.bot, interaction.user.id))
+        await views.show(interaction, handlers.basket_show_reply(self.bot, interaction.user.id))
 
     @app_commands.command(name="link", description="Get a download link for everything in your basket")
     @per_user_cooldown
     async def link(self, interaction: discord.Interaction) -> None:
-        await send_ephemeral(interaction, *handlers.basket_link(self.bot, interaction.user.id))
+        # Same panel as `show`: it always carries a fresh basket link.
+        await views.show(interaction, handlers.basket_show_reply(self.bot, interaction.user.id))
 
     @app_commands.command(name="clear", description="Empty your basket")
     @per_user_cooldown
     async def clear(self, interaction: discord.Interaction) -> None:
-        await send_ephemeral(interaction, *handlers.basket_clear_reply(self.bot, interaction.user.id))
+        await views.show(interaction, handlers.basket_clear_reply(self.bot, interaction.user.id))
 
 
 async def setup(bot: ZipBot) -> None:

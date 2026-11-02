@@ -17,6 +17,8 @@ class Settings(BaseSettings):
 
     discord_token: SecretStr
     public_base_url: str
+    # For the /install link before the bot has logged in; after login the bot's own id is used.
+    discord_application_id: int | None = Field(None, ge=1)
     web_host: str = "0.0.0.0"  # noqa: S104 - inside the container; compose publishes on 127.0.0.1 only
     web_port: int = Field(8080, ge=1, le=65535)
 
@@ -27,11 +29,12 @@ class Settings(BaseSettings):
     # Every attachment by default; e.g. `image,video` opts out of other files.
     media_types: Annotated[frozenset[str], NoDecode] = frozenset({"all"})
     dm_debounce_sec: float = Field(8, ge=0, le=60)
-    max_active_links_per_user: int = Field(20, ge=1, le=1000)
+    # ≥ 2: a panel holds its own link plus the basket link.
+    max_active_links_per_user: int = Field(20, ge=2, le=1000)
     resolve_rate_per_min: int = Field(30, ge=1, le=10_000)
+    # Peers whose X-Forwarded-For is believed: loopback only; docker-compose.yml adds its gateway.
     trusted_proxies: Annotated[tuple[IPv4Network | IPv6Network, ...], NoDecode] = (
         ip_network("127.0.0.1/32"),
-        ip_network("172.16.0.0/12"),
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
 
@@ -45,6 +48,11 @@ class Settings(BaseSettings):
         if not parts.hostname or parts.query or parts.fragment:
             raise ValueError("must be a bare origin/base path, without query or fragment")
         return v.rstrip("/")
+
+    @field_validator("discord_application_id", mode="before")
+    @classmethod
+    def _optional_id(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v  # `DISCORD_APPLICATION_ID=` means unset
 
     @field_validator("media_types", mode="before")
     @classmethod
