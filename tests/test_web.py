@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from ipaddress import ip_network
 from pathlib import Path
 from types import SimpleNamespace
@@ -59,6 +60,23 @@ async def test_pages_and_static(client: Any) -> None:
         assert resp.headers["Cache-Control"] == "no-cache"
     assert (await client.get("/static/")).status in {403, 404}
     assert (await client.get("/static/../app.py")).status == 404
+
+
+@pytest.mark.parametrize(
+    ("path", "ctype"), [("/static/icons.svg", "image/svg+xml"), ("/static/style.css", "text/css")]
+)
+async def test_theme_assets_served_with_security_headers(client: Any, path: str, ctype: str) -> None:
+    resp = await client.get(path)
+    assert resp.status == 200
+    assert resp.headers["Content-Type"].startswith(ctype)  # nosniff: a wrong type would break <use>/CSS
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+def test_icon_sprite_is_self_contained() -> None:
+    svg = re.sub(r"<!--.*?-->", "", (web_app.STATIC / "icons.svg").read_text(encoding="utf-8"), flags=re.S)
+    assert "<style" not in svg and "<script" not in svg and "href=" not in svg  # no CSP or external fetches
+    assert 'id="i-download"' in svg
 
 
 async def test_resolve_ok_matches_contract(client: Any, store: Store) -> None:

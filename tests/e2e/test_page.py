@@ -340,6 +340,19 @@ def test_desktop_prefers_zip(page: Page, server: tuple[str, Store], cdn: Cdn) ->
     assert page.locator("#actions .buttons button").first.get_attribute("id") == "btn-zip"
 
 
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms", "/d"])
+def test_themed_pages_render_without_csp_violations(page: Page, server: tuple[str, Store], path: str) -> None:
+    # The `page` fixture fails on any CSP violation; here we also check the theme and sprite actually load.
+    statuses: dict[str, int] = {}
+    page.on("response", lambda r: statuses.update({r.url.split("#")[0]: r.status}))
+    page.goto(server[0] + path)
+    page.wait_for_load_state("networkidle")
+    assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(246, 247, 249)"
+    assert statuses.get(f"{server[0]}/static/style.css") == 200
+    if path == "/d":
+        assert statuses.get(f"{server[0]}/static/icons.svg") == 200
+
+
 def test_no_third_party_requests(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
     base, store = server
     seen: list[str] = []
