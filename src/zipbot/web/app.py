@@ -9,6 +9,7 @@ from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable
 from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
+from typing import Protocol
 from urllib.parse import quote, urlencode
 
 from aiohttp import web
@@ -55,8 +56,9 @@ log = logging.getLogger(__name__)
 
 SETTINGS_KEY = web.AppKey("settings", Settings)
 STORE_KEY = web.AppKey("store", Store)
-# Returns the application id once the bot has logged in (None before that).
+# Returns the application id for /install, or None while it is not known yet.
 APPLICATION_ID_KEY = web.AppKey[Callable[[], int | None]]("application_id")
+UNAVAILABLE_KEY = web.AppKey("install_unavailable", bytes)  # the /install 503 page
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -180,27 +182,59 @@ def install_url(application_id: int, kind: str) -> str:
     )
 
 
-async def install(request: web.Request) -> web.StreamResponse:
+class HasApplicationId(Protocol):
+    @property
+    def application_id(self) -> int | None: ...
+
+
+class ApplicationId:
+    """The install link's application id: the logged-in bot's own, else DISCORD_APPLICATION_ID."""
+
+    def __init__(self, configured: int | None) -> None:
+        self.configured = configured
+        self.bot: HasApplicationId | None = None  # set by __main__.run() once the client exists
+
+    def __call__(self) -> int | None:
+        actual = self.bot.application_id if self.bot is not None else None
+        return actual if actual is not None else self.configured
+
+    def check(self) -> None:
+        """Run after login: a stale or mistyped DISCORD_APPLICATION_ID should not pass silently."""
+        actual = self.bot.application_id if self.bot is not None else None
+        if actual is not None and self.configured is not None and actual != self.configured:
+            log.warning(
+                "DISCORD_APPLICATION_ID %d is not this bot's application (%d); the install link uses %d",
+                self.configured,
+                actual,
+                actual,
+            )
+
+
+async def install(request: web.Request) -> web.Response:
     """`/install` (user install) or `/install?type=guild` → Discord's OAuth2 install screen."""
     kind = "guild" if request.query.get("type") == "guild" else "user"
-    app_id = request.app[SETTINGS_KEY].discord_application_id or request.app[APPLICATION_ID_KEY]()
+    app_id = request.app[APPLICATION_ID_KEY]()
     if app_id is None:  # bot not logged in yet (just started, or Discord unreachable)
-        return web.FileResponse(
-            STATIC / "install-unavailable.html",
+        # A plain response, not FileResponse: no Range/ETag/304 handling on an error page.
+        return web.Response(
+            body=request.app[UNAVAILABLE_KEY],
             status=503,
-            headers={"Content-Type": "text/html; charset=utf-8", "Retry-After": str(INSTALL_RETRY_SEC)},
+            content_type="text/html",
+            charset="utf-8",
+            headers={"Retry-After": str(INSTALL_RETRY_SEC)},
         )
     raise web.HTTPFound(install_url(app_id, kind))
 
 
 def create_app(
-    settings: Settings, store: Store, application_id: Callable[[], int | None] = lambda: None
+    settings: Settings, store: Store, application_id: Callable[[], int | None] | None = None
 ) -> web.Application:
     app = web.Application(middlewares=[security_headers], client_max_size=4096)
     app[SETTINGS_KEY] = settings
     app[STORE_KEY] = store
     app[LIMITER_KEY] = RateLimiter(settings.resolve_rate_per_min)
-    app[APPLICATION_ID_KEY] = application_id
+    app[APPLICATION_ID_KEY] = application_id or ApplicationId(settings.discord_application_id)
+    app[UNAVAILABLE_KEY] = (STATIC / "install-unavailable.html").read_bytes()
     app.router.add_get("/healthz", healthz)
     app.router.add_get("/", _page("index.html"))
     app.router.add_get("/install", install)

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 import re
 from ipaddress import ip_network
 from pathlib import Path
@@ -12,10 +14,11 @@ import jsonschema
 import pytest
 
 from helpers import EX, item
+from zipbot.__main__ import check_application_id
 from zipbot.config import Settings
 from zipbot.store import Store
 from zipbot.web import app as web_app
-from zipbot.web.app import SECURITY_HEADERS, RateLimiter, client_ip, create_app, limit_key
+from zipbot.web.app import SECURITY_HEADERS, ApplicationId, RateLimiter, client_ip, create_app, limit_key
 
 SCHEMA = json.loads((Path(__file__).parent / "contract" / "resolve.schema.json").read_text(encoding="utf-8"))
 
@@ -107,22 +110,109 @@ async def test_install_redirects_to_discord(
     assert resp.headers["Content-Security-Policy"] == SECURITY_HEADERS["Content-Security-Policy"]
 
 
-async def test_install_prefers_configured_id(aiohttp_client: Any, settings: Settings, store: Store) -> None:
-    s = settings.model_copy(update={"discord_application_id": 42})
-    client = await aiohttp_client(create_app(s, store, application_id=lambda: None))
+class StubBot:
+    """Stands in for discord.Client: application_id is None until login."""
+
+    def __init__(self) -> None:
+        self.application_id: int | None = None
+        self.ready = asyncio.Event()
+
+    async def wait_until_ready(self) -> None:
+        await self.ready.wait()
+
+
+async def _install_location(client: Any) -> int | str:
     resp = await client.get("/install", allow_redirects=False)
-    assert resp.status == 302
-    assert _query(resp.headers["Location"])["client_id"] == ["42"]
+    return _query(resp.headers["Location"])["client_id"][0] if resp.status == 302 else resp.status
+
+
+async def test_install_uses_bot_id_once_logged_in(
+    aiohttp_client: Any, settings: Settings, store: Store
+) -> None:
+    app_id = ApplicationId(None)
+    client = await aiohttp_client(create_app(settings, store, application_id=app_id))
+    assert await _install_location(client) == 503  # no client yet
+    bot = StubBot()
+    app_id.bot = bot
+    assert await _install_location(client) == 503  # client exists, not logged in
+    bot.application_id = 77
+    assert await _install_location(client) == "77"
+
+
+async def test_install_configured_id_is_the_pre_login_fallback(
+    aiohttp_client: Any, settings: Settings, store: Store
+) -> None:
+    s = settings.model_copy(update={"discord_application_id": 42})
+    app = create_app(s, store)  # default source: ApplicationId(DISCORD_APPLICATION_ID)
+    app_id = app[web_app.APPLICATION_ID_KEY]
+    assert isinstance(app_id, ApplicationId)
+    client = await aiohttp_client(app)
+    assert await _install_location(client) == "42"
+    bot = StubBot()
+    app_id.bot = bot
+    assert await _install_location(client) == "42"
+    bot.application_id = 77  # the real id wins after login
+    assert await _install_location(client) == "77"
+
+
+async def test_application_id_mismatch_warns_after_login(caplog: pytest.LogCaptureFixture) -> None:
+    app_id = ApplicationId(42)
+    bot = StubBot()
+    app_id.bot = bot
+    task = asyncio.create_task(check_application_id(cast(Any, bot), app_id))
+    await asyncio.sleep(0)
+    assert not task.done() and not caplog.records  # waits for login
+    bot.application_id = 77
+    bot.ready.set()
+    with caplog.at_level(logging.WARNING, logger="zipbot.web.app"):
+        await asyncio.wait_for(task, 1)
+    [record] = caplog.records
+    assert record.levelno == logging.WARNING
+    assert "42" in record.getMessage() and "77" in record.getMessage()
+
+
+@pytest.mark.parametrize("configured", [None, 77])
+async def test_application_id_match_is_silent(
+    caplog: pytest.LogCaptureFixture, configured: int | None
+) -> None:
+    app_id = ApplicationId(configured)
+    bot = StubBot()
+    bot.application_id = 77
+    bot.ready.set()
+    app_id.bot = bot
+    with caplog.at_level(logging.WARNING):
+        await check_application_id(cast(Any, bot), app_id)
+    assert not caplog.records
+    assert app_id() == 77
 
 
 async def test_install_unavailable_before_login(client: Any) -> None:
     resp = await client.get("/install?type=guild", allow_redirects=False)
     assert resp.status == 503
     assert resp.headers["Retry-After"] == "30"
-    assert resp.headers["Content-Type"].startswith("text/html")
+    assert resp.headers["Content-Type"] == "text/html; charset=utf-8"
     assert "not ready" in await resp.text()
     for name, value in SECURITY_HEADERS.items():
         assert resp.headers[name] == value
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Range": "bytes=0-10"},
+        {"If-None-Match": "*"},
+        {"If-Modified-Since": "Fri, 01 Jan 2100 00:00:00 GMT"},
+        {"If-Range": "x", "Range": "bytes=5-"},
+    ],
+)
+async def test_install_503_ignores_range_and_conditional_headers(
+    client: Any, headers: dict[str, str]
+) -> None:
+    resp = await client.get("/install", headers=headers, allow_redirects=False)
+    assert resp.status == 503
+    assert "ETag" not in resp.headers and "Last-Modified" not in resp.headers
+    assert "Content-Range" not in resp.headers and "Accept-Ranges" not in resp.headers
+    assert (await resp.read()) == (web_app.STATIC / "install-unavailable.html").read_bytes()
 
 
 def test_install_url_encodes_scope_as_space() -> None:

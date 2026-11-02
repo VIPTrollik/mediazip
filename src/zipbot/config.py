@@ -17,7 +17,7 @@ class Settings(BaseSettings):
 
     discord_token: SecretStr
     public_base_url: str
-    # For the /install link. The bot learns it at login; set it to serve the link before that.
+    # For the /install link before the bot has logged in; after login the bot's own id is used.
     discord_application_id: int | None = Field(None, ge=1)
     web_host: str = "0.0.0.0"  # noqa: S104 - inside the container; compose publishes on 127.0.0.1 only
     web_port: int = Field(8080, ge=1, le=65535)
