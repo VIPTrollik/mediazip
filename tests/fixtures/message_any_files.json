@@ -1,0 +1,56 @@
+{
+  "type": 0,
+  "content": "",
+  "attachments": [
+    {
+      "id": "100000000000000101",
+      "filename": "report.pdf",
+      "size": 48213,
+      "url": "https://cdn.discordapp.com/attachments/100000000000000100/100000000000000101/report.pdf?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "proxy_url": "https://media.discordapp.net/attachments/100000000000000100/100000000000000101/report.pdf?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "content_type": "application/pdf"
+    },
+    {
+      "id": "100000000000000102",
+      "filename": "notes.txt",
+      "size": 312,
+      "url": "https://cdn.discordapp.com/attachments/100000000000000100/100000000000000102/notes.txt?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "proxy_url": "https://media.discordapp.net/attachments/100000000000000100/100000000000000102/notes.txt?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "content_type": "text/plain; charset=utf-8"
+    },
+    {
+      "id": "100000000000000103",
+      "filename": "photos.zip",
+      "size": 1048576,
+      "url": "https://cdn.discordapp.com/attachments/100000000000000100/100000000000000103/photos.zip?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "proxy_url": "https://media.discordapp.net/attachments/100000000000000100/100000000000000103/photos.zip?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "content_type": "application/zip"
+    },
+    {
+      "id": "100000000000000104",
+      "filename": "Makefile",
+      "size": 640,
+      "url": "https://cdn.discordapp.com/attachments/100000000000000100/100000000000000104/Makefile?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "proxy_url": "https://media.discordapp.net/attachments/100000000000000100/100000000000000104/Makefile?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&"
+    },
+    {
+      "id": "100000000000000105",
+      "filename": "backup.tar.gz",
+      "size": 20480,
+      "url": "https://cdn.discordapp.com/attachments/100000000000000100/100000000000000105/backup.tar.gz?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "proxy_url": "https://media.discordapp.net/attachments/100000000000000100/100000000000000105/backup.tar.gz?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&"
+    },
+    {
+      "id": "100000000000000106",
+      "filename": "photo.png",
+      "size": 9001,
+      "width": 800,
+      "height": 600,
+      "url": "https://cdn.discordapp.com/attachments/100000000000000100/100000000000000106/photo.png?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "proxy_url": "https://media.discordapp.net/attachments/100000000000000100/100000000000000106/photo.png?ex=6aea244b&is=6ae8d2cb&hm=0000000000000000000000000000000000000000000000000000000000000000&",
+      "content_type": "image/png"
+    }
+  ],
+  "embeds": [],
+  "_comment": "Synthetic (not captured): one message with non-media attachments for MEDIA_TYPES=all and contract v2."
+}

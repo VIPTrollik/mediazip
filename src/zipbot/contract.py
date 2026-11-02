@@ -1,5 +1,6 @@
-"""`POST /api/resolve` response body (PLAN.md §5). Frozen at G2; the JSON Schema in
-tests/contract/resolve.schema.json is the source of truth for both server and page."""
+"""`POST /api/resolve` response body (PLAN.md §5). v1 was frozen at G2; v2 adds kind "file".
+The JSON Schema in tests/contract/resolve.schema.json is the source of truth for both server
+and page."""
 
 from __future__ import annotations
 

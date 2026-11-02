@@ -23,10 +23,17 @@ def load() -> Settings:
 def test_defaults(env: pytest.MonkeyPatch) -> None:
     s = load()
     assert s.public_base_url == "https://dl.example.com"
-    assert s.media_types == {"image", "video"}
-    assert not s.all_media
+    assert s.media_types == {"all"}  # any file type (v0.1)
+    assert s.all_media
     assert s.link_ttl_min == 60
     assert any(ip_address("172.18.0.1") in net for net in s.trusted_proxies)
+
+
+def test_media_only_opt_out(env: pytest.MonkeyPatch) -> None:
+    env.setenv("MEDIA_TYPES", "image,video")
+    s = load()
+    assert s.media_types == {"image", "video"}
+    assert not s.all_media
 
 
 def test_token_is_secret(env: pytest.MonkeyPatch) -> None:

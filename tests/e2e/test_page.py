@@ -168,6 +168,27 @@ def test_zip_download(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
     assert "Zipped 3 files" in (page.text_content("#status") or "")
 
 
+def test_zip_of_any_file_type(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    base, store = server
+    names = ["report.pdf", "notes.txt", "photos.zip", "Makefile", "backup.tar.gz", ".env"]
+    token = make_link(store, cdn, [(n, 0) for n in names], ctype=None)
+    page.goto(f"{base}/d#{token}")
+    wait_state(page, "ready")
+    assert page.locator("#grid li").count() == 6
+    assert page.locator("#grid img").count() == 0  # files get no thumbnail
+    with page.expect_download() as dl:
+        page.click("#btn-zip")
+    entries = zip_entries(dl.value.path())
+    assert entries == {
+        "report.pdf": b"report.pdf",
+        "notes.txt": b"notes.txt",
+        "photos.zip": b"photos.zip",
+        "Makefile": b"Makefile",
+        "backup.tar.gz": b"backup.tar.gz",
+        "env": b".env",
+    }
+
+
 def test_auto_zip_from_fragment(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
     base, store = server
     token = make_link(store, cdn, [("x.png", 0)])

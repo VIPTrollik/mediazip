@@ -24,6 +24,7 @@ ALLOWED_HOSTS = frozenset(
     }
 )
 MEDIA_KINDS = ("image", "video", "audio")
+FILE_KIND = "file"  # any other attachment: a PDF, an archive, a file with no extension...
 
 Payload = Mapping[str, Any]
 
@@ -40,12 +41,14 @@ class MediaItem:
     duration_secs: float | None
     source_index: int
     cdn_expires_at: int | None
+    fallback_kind: str = FILE_KIND  # embeds set "image"/"video": they are media even when untyped
 
     @property
-    def kind(self) -> str | None:
+    def kind(self) -> str:
+        """One of MEDIA_KINDS, or "file". Never None, so `kinds` filters and the page agree."""
         ctype = self.content_type or mimetypes.guess_type(self.filename)[0] or ""
         kind = ctype.split("/", 1)[0]
-        return kind if kind in MEDIA_KINDS else None
+        return kind if kind in MEDIA_KINDS else self.fallback_kind
 
 
 def is_allowed_url(url: object) -> TypeGuard[str]:
@@ -115,6 +118,7 @@ def _embed_media(e: Payload) -> Payload | None:
 
 
 def _from_embed(e: Payload, source_index: int, n: int) -> MediaItem | None:
+    """Embeds stay media-only: a link preview is not an attachment, so never a "file"."""
     media = _embed_media(e)
     if not isinstance(media, Mapping):
         return None
@@ -137,6 +141,7 @@ def _from_embed(e: Payload, source_index: int, n: int) -> MediaItem | None:
         duration_secs=None,
         source_index=source_index,
         cdn_expires_at=cdn_expiry(proxy),
+        fallback_kind="video" if media is e.get("video") else "image",
     )
 
 
@@ -153,7 +158,8 @@ def extract(
 ) -> list[MediaItem]:
     """Media of one message, in order: attachments, forwarded attachments, embeds.
 
-    `kinds` limits to e.g. {"image", "video"}; None means every file (MEDIA_TYPES=all).
+    `kinds` limits to e.g. {"image", "video"} (attachments of any other type are "file", so
+    they are left out); None means every attachment (MEDIA_TYPES=all, the default).
     """
     wanted = None if kinds is None else frozenset(kinds)
     layers = list(_layers(message))

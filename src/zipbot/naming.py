@@ -19,9 +19,12 @@ _RESERVED = re.compile(r"^(con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])$", re.
 
 
 def _split_ext(name: str) -> tuple[str, str]:
+    """`stem`, `.ext`; `.tar.gz` & co stay whole, so truncation and counters never split them."""
     stem, dot, ext = name.rpartition(".")
     if not dot or not stem or len(ext) > MAX_EXT or not ext.isalnum():
         return name, ""
+    if len(stem) > 4 and stem[-4:].lower() == ".tar":
+        return stem[:-4], f"{stem[-4:]}.{ext}"
     return stem, "." + ext
 
 

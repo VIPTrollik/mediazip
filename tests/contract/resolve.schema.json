@@ -1,7 +1,8 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "zipbot/resolve-response/v1",
-  "title": "POST /api/resolve 200 response (frozen at G2)",
+  "$id": "zipbot/resolve-response/v2",
+  "title": "POST /api/resolve 200 response (v2)",
+  "description": "v1 was frozen at G2. v2 adds kind \"file\" for attachments that are not image/video/audio, and kind is never null.",
   "type": "object",
   "additionalProperties": false,
   "required": ["expires_at", "items"],
@@ -25,7 +26,10 @@
             "pattern": "^(\\d{2}/)?[^/\\\\:*?\"<>|\\u0000-\\u001f]+$",
             "description": "Relative path inside the ZIP; optional 2-digit folder per source message"
           },
-          "kind": { "enum": ["image", "video", "audio", null] },
+          "kind": {
+            "enum": ["image", "video", "audio", "file"],
+            "description": "\"file\": any other attachment (no thumb); embeds are always image or video"
+          },
           "mime": { "type": ["string", "null"] },
           "size": { "type": ["integer", "null"], "minimum": 0 },
           "width": { "type": ["integer", "null"], "minimum": 0 },

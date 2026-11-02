@@ -64,7 +64,34 @@ def test_kinds_filter_and_all() -> None:
     }
     assert [i.filename for i in extract(msg, kinds=IMAGE_VIDEO)] == ["pic.png"]
     assert [i.filename for i in extract(msg, kinds={"audio"})] == ["song.mp3"]
-    assert len(extract(msg)) == 3
+    assert [i.kind for i in extract(msg)] == ["file", "audio", "image"]
+
+
+def test_any_file_fixture() -> None:
+    msg = fixture("message_any_files.json")
+    items = extract(msg)
+    assert [(i.filename, i.kind) for i in items] == [
+        ("report.pdf", "file"),
+        ("notes.txt", "file"),  # text/* is not media
+        ("photos.zip", "file"),
+        ("Makefile", "file"),  # no extension, no content_type
+        ("backup.tar.gz", "file"),  # no content_type, guessed as a tarball
+        ("photo.png", "image"),
+    ]
+    assert items[3].content_type is None
+    assert [i.filename for i in extract(msg, kinds=IMAGE_VIDEO)] == ["photo.png"]
+    assert extract(msg, kinds={"audio"}) == []
+
+
+def test_untyped_embed_is_still_media() -> None:
+    proxy = "https://images-ext-1.discordapp.net/external/x/https/example.com/pic"  # no extension
+    image = {"type": "image", "thumbnail": {"proxy_url": proxy}}
+    video = {"type": "video", "video": {"proxy_url": proxy + "2"}}
+    items = extract({"embeds": [image, video]}, kinds=IMAGE_VIDEO)
+    assert [(i.filename, i.kind, i.content_type) for i in items] == [
+        ("pic", "image", None),
+        ("pic2", "video", None),
+    ]
 
 
 @pytest.mark.parametrize(

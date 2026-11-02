@@ -24,7 +24,8 @@ class Settings(BaseSettings):
     basket_ttl_min: int = Field(60, ge=1, le=24 * 60)
     basket_max_messages: int = Field(10, ge=1, le=50)
     max_files_per_link: int = Field(100, ge=1, le=500)
-    media_types: Annotated[frozenset[str], NoDecode] = frozenset({"image", "video"})
+    # Every attachment by default; e.g. `image,video` opts out of other files.
+    media_types: Annotated[frozenset[str], NoDecode] = frozenset({"all"})
     dm_debounce_sec: float = Field(8, ge=0, le=60)
     max_active_links_per_user: int = Field(20, ge=1, le=1000)
     resolve_rate_per_min: int = Field(30, ge=1, le=10_000)

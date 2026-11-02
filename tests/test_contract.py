@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import jsonschema
 import pytest
@@ -55,6 +56,44 @@ def test_hostile_filename_still_matches_schema(store: Store) -> None:
     body = resolve_body(record)
     jsonschema.validate(body, SCHEMA)
     assert body["items"][0]["name"] == "_img src=x onerror=alert(1)__..__x_.png"
+
+
+def test_any_file_type_body(store: Store) -> None:
+    items = [
+        *extract(fixture("message_any_files.json"), source_index=0),
+        item(".env", ctype=None, width=None, height=None, source=1),  # dotfile, no content_type
+    ]
+    _, record = store.create_link(1, items)
+    body = resolve_body(record)
+    jsonschema.validate(body, SCHEMA)
+    rows = [(i["name"], i["kind"], i["mime"], i["thumb"]) for i in body["items"]]
+    assert rows[:5] == [
+        ("01/report.pdf", "file", "application/pdf", None),
+        ("01/notes.txt", "file", "text/plain; charset=utf-8", None),
+        ("01/photos.zip", "file", "application/zip", None),
+        ("01/Makefile", "file", None, None),
+        ("01/backup.tar.gz", "file", None, None),
+    ]
+    assert rows[5][:2] == ("01/photo.png", "image") and rows[5][3]
+    assert rows[6] == ("02/env", "file", None, None)
+
+
+def test_schema_v2_kinds() -> None:
+    assert SCHEMA["$id"] == "zipbot/resolve-response/v2"
+    body = resolve_body_stub()
+    for kind in ("image", "video", "audio", "file"):
+        body["items"][0]["kind"] = kind
+        jsonschema.validate(body, SCHEMA)
+    for kind in (None, "document"):  # v2: every item has a kind
+        body["items"][0]["kind"] = kind
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(body, SCHEMA)
+
+
+def resolve_body_stub() -> dict[str, Any]:
+    entry = dict.fromkeys(SCHEMA["properties"]["items"]["items"]["required"])
+    entry.update(url="https://cdn.discordapp.com/a/1/x.bin", name="x.bin", kind="file")
+    return {"expires_at": 1, "items": [entry]}
 
 
 def test_schema_rejects_foreign_urls() -> None:
