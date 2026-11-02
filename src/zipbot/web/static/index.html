@@ -4,20 +4,113 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="description" content="Download every attachment of a Discord message at once, as a ZIP or straight to your device.">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1e1f22" media="(prefers-color-scheme: dark)">
 <title>Discord media downloader</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/landing.css">
 </head>
 <body>
-<main>
-  <h1>Discord media downloader</h1>
-  <p>Save every attachment of a Discord message at once — images, videos and any other file — as a ZIP or straight to your phone.</p>
-  <ol>
-    <li>Right-click (or long-press) a message → <b>Apps</b> → <b>Download attachments</b>.</li>
-    <li>Tap <b>Save to phone</b> or <b>Download ZIP</b> in the reply that only you can see.</li>
-  </ol>
-  <p>You can also forward messages to the bot in a DM.</p>
-  <p class="muted">Files go straight from Discord to your device; this server never stores them.
-    <a href="/privacy">Privacy</a> · <a href="/terms">Terms</a></p>
+<main class="landing">
+  <section class="hero" aria-labelledby="title">
+    <div class="hero__text">
+      <h1 id="title">Discord media downloader</h1>
+      <p class="hero__lead">Download every attachment of a Discord message at once — as a ZIP or straight to your device.
+        Photos, videos, PDFs, archives: any file type.</p>
+      <div class="actions">
+        <a class="btn btn--primary btn--lg" href="/install">
+          <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-plus"/></svg>Add to Discord
+        </a>
+        <a class="btn btn--secondary btn--lg" href="/install?type=guild">Add to a server</a>
+      </div>
+      <p class="hero__hint"><b>Add to Discord</b> puts it on your account, for any server or DM.
+        <b>Add to a server</b> makes it available to everyone there (needs Manage Server).</p>
+    </div>
+
+    <figure class="hero__art">
+      <svg class="art" viewBox="0 0 440 250" role="img" aria-labelledby="art-title">
+        <title id="art-title">A message with three attachments, the bot's private reply with Download all and
+          Download ZIP buttons, and the files arriving on a phone.</title>
+        <rect class="art-panel" x="1" y="1" width="298" height="247" rx="14"/>
+        <!-- the message: avatar, name, text, three attachments -->
+        <circle class="art-avatar" cx="34" cy="34" r="14"/>
+        <rect class="art-bar art-bar--strong" x="58" y="22" width="70" height="8" rx="4"/>
+        <rect class="art-bar" x="134" y="23" width="30" height="6" rx="3"/>
+        <rect class="art-bar" x="58" y="38" width="150" height="6" rx="3"/>
+        <rect class="art-tile" x="58" y="56" width="64" height="64" rx="8"/>
+        <circle class="art-sun" cx="105" cy="73" r="6"/>
+        <path class="art-hill" d="M58 112 L80 88 L94 102 L104 93 L122 112 V112 Q122 120 114 120 H66 Q58 120 58 112 Z"/>
+        <rect class="art-tile" x="130" y="56" width="64" height="64" rx="8"/>
+        <path class="art-ink" d="M154 70 h11 l7 7 v23 a2 2 0 0 1 -2 2 h-16 a2 2 0 0 1 -2 -2 v-28 a2 2 0 0 1 2 -2 z M165 70 v7 h7 M157 86 h10 M157 92 h10"/>
+        <rect class="art-tile" x="202" y="56" width="64" height="64" rx="8"/>
+        <circle class="art-play-bg" cx="234" cy="88" r="15"/>
+        <path class="art-play" d="M229 80 L241 88 L229 96 Z"/>
+        <!-- the bot's reply, visible only to you -->
+        <circle class="art-avatar art-avatar--bot" cx="34" cy="150" r="14"/>
+        <path class="art-bot-glyph" d="M34 142 v11 M29.5 148.5 l4.5 4.5 4.5 -4.5 M28 157 h12"/>
+        <rect class="art-bar art-bar--strong" x="58" y="138" width="54" height="8" rx="4"/>
+        <rect class="art-pill" x="118" y="137" width="52" height="10" rx="5"/>
+        <rect class="art-bar" x="58" y="154" width="124" height="6" rx="3"/>
+        <rect class="art-btn" x="58" y="172" width="110" height="32" rx="8"/>
+        <text class="art-btn-label" x="113" y="192.5" text-anchor="middle">Download all</text>
+        <rect class="art-btn art-btn--secondary" x="176" y="172" width="108" height="32" rx="8"/>
+        <text class="art-btn-label art-btn-label--secondary" x="230" y="192.5" text-anchor="middle">Download ZIP</text>
+        <text class="art-caption" x="58" y="228">3 files · 4.8 MB · link expires in 60 min</text>
+        <!-- arrow to the device -->
+        <path class="art-arrow" d="M306 125 H334 M327 118 L334 125 L327 132"/>
+        <!-- the phone, files saved -->
+        <rect class="art-device" x="344" y="30" width="92" height="190" rx="16"/>
+        <rect class="art-bar" x="378" y="40" width="24" height="5" rx="2.5"/>
+        <rect class="art-tile" x="356" y="72" width="22" height="22" rx="5"/>
+        <rect class="art-bar" x="384" y="80" width="26" height="6" rx="3"/>
+        <circle class="art-ok" cx="420" cy="83" r="8"/>
+        <path class="art-check" d="M416 83 l3 3 5 -6"/>
+        <rect class="art-tile" x="356" y="108" width="22" height="22" rx="5"/>
+        <rect class="art-bar" x="384" y="116" width="22" height="6" rx="3"/>
+        <circle class="art-ok" cx="420" cy="119" r="8"/>
+        <path class="art-check" d="M416 119 l3 3 5 -6"/>
+        <rect class="art-tile" x="356" y="144" width="22" height="22" rx="5"/>
+        <rect class="art-bar" x="384" y="152" width="28" height="6" rx="3"/>
+        <circle class="art-ok" cx="420" cy="155" r="8"/>
+        <path class="art-check" d="M416 155 l3 3 5 -6"/>
+        <rect class="art-bar" x="356" y="190" width="68" height="6" rx="3"/>
+        <rect class="art-bar" x="356" y="204" width="44" height="6" rx="3"/>
+      </svg>
+    </figure>
+  </section>
+
+  <section class="how" aria-labelledby="how-title">
+    <h2 id="how-title">How it works</h2>
+    <ol class="steps">
+      <li class="card step">
+        <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-file"/></svg></span>
+        <h3>Pick a message</h3>
+        <p>Right-click or long-press it, then choose <b>Apps</b> → <b>Download attachments</b>.</p>
+      </li>
+      <li class="card step">
+        <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-download"/></svg></span>
+        <h3>Download</h3>
+        <p>In the reply only you can see, tap <b>Download all</b> for separate files or <b>Download ZIP</b> for one archive.</p>
+      </li>
+      <li class="card step">
+        <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-share"/></svg></span>
+        <h3>Or forward it</h3>
+        <p>Forward messages to the bot in a DM, or upload files there, and get one link for all of them.</p>
+      </li>
+    </ol>
+  </section>
+
+  <div class="card card--flat note landing__note">
+    <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-lock"/></svg>
+    <p>Files go straight from Discord to your device. This server never stores them, keeps no file names in its logs,
+      and download links are short-lived. <a href="/privacy">How your data is handled</a></p>
+  </div>
+
+  <footer class="site-footer">
+    <nav aria-label="Site"><a href="/privacy">Privacy</a> <a href="/terms">Terms</a></nav>
+    <p>Not affiliated with or endorsed by Discord.</p>
+  </footer>
 </main>
 </body>
 </html>

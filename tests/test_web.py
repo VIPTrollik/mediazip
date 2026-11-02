@@ -68,6 +68,7 @@ async def test_pages_and_static(client: Any) -> None:
     [
         ("/static/icons.svg", "image/svg+xml"),
         ("/static/style.css", "text/css"),
+        ("/static/landing.css", "text/css"),
     ],
 )
 async def test_theme_assets_served_with_security_headers(client: Any, path: str, ctype: str) -> None:
@@ -130,6 +131,19 @@ def test_install_url_encodes_scope_as_space() -> None:
         "https://discord.com/oauth2/authorize"
         "?client_id=7&integration_type=0&scope=applications.commands%20bot&permissions=0"
     )
+
+
+async def test_landing_page(client: Any) -> None:
+    resp = await client.get("/")
+    assert resp.status == 200
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+    html = await resp.text()
+    assert 'href="/install"' in html and 'href="/install?type=guild"' in html
+    assert "discord.com" not in html  # the install URL is built server-side from the application id
+    assert html.index('href="/static/style.css"') < html.index('href="/static/landing.css"')
+    assert 'href="/privacy"' in html and 'href="/terms"' in html
+    assert not re.search(r"<script|<style|\sstyle=|\son[a-z]+=", html)  # CSP: nothing inline
 
 
 def test_icon_sprite_is_self_contained() -> None:

@@ -1,0 +1,73 @@
+/* Landing page (index.html only), loaded after style.css: layout + the inline illustration.
+   Uses the theme's tokens and components; no new colours except the illustration's own. */
+
+/* ---- Hero ----------------------------------------------------------------------- */
+.hero {
+  display: grid; gap: var(--space-6); align-items: center;
+  padding: var(--space-4) 0 var(--space-6);
+}
+@media (min-width: 840px) {
+  .hero { grid-template-columns: minmax(0, 1fr) minmax(0, 420px); padding-top: var(--space-5); }
+}
+.hero__text > * { margin: 0; }
+.hero__text > * + * { margin-top: var(--space-4); }
+.hero h1 { font-size: var(--text-2xl); letter-spacing: -0.01em; }
+.hero__lead { font-size: var(--text-lg); line-height: 1.4; color: var(--muted); max-width: 36ch; }
+.hero .actions { margin-top: var(--space-5); }
+.hero__hint { font-size: var(--text-sm); color: var(--muted); max-width: 52ch; }
+.hero__hint b { color: var(--fg); font-weight: 600; }
+.hero__art { margin: 0; }
+.hero__art svg { display: block; width: 100%; height: auto; }
+
+/* ---- Steps ---------------------------------------------------------------------- */
+.steps {
+  list-style: none; margin: 0; padding: 0;
+  display: grid; gap: var(--space-3);
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+}
+.step { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: var(--space-1) var(--space-3); align-content: start; }
+.step__icon {
+  grid-row: span 2;
+  width: var(--icon-lg); height: var(--icon-lg); border-radius: var(--radius-full);
+  display: grid; place-items: center;
+  background: var(--surface-2); color: var(--link);
+}
+.step h3 { margin: 0; align-self: end; }
+.step p { margin: 0; font-size: var(--text-sm); color: var(--muted); }
+.step p b { color: var(--fg); font-weight: 600; }
+
+.landing__note { margin-top: var(--space-5); }
+.landing__note a { color: var(--link); }
+.landing .site-footer { margin-top: var(--space-6); } /* keeps the page to one 1280×800 screen */
+
+/* ---- Illustration (inline SVG in index.html) ------------------------------------ */
+.art {
+  --art-sun: #e0a53a;
+  --art-hill: #7b86e8;
+  font-family: var(--font);
+}
+@media (prefers-color-scheme: dark) {
+  .art { --art-sun: #f0c164; --art-hill: #8e97f5; }
+}
+.art-panel { fill: var(--surface); stroke: var(--border); }
+.art-device { fill: var(--surface); stroke: var(--border-strong); stroke-width: 2; }
+.art-tile { fill: var(--surface-2); }
+.art-bar { fill: var(--border); }
+.art-bar--strong { fill: var(--border-strong); }
+.art-avatar { fill: var(--surface-2); stroke: var(--border-strong); }
+.art-avatar--bot { fill: var(--accent); stroke: none; }
+.art-bot-glyph { fill: none; stroke: var(--accent-fg); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.art-pill { fill: var(--surface-2); }
+.art-sun { fill: var(--art-sun); }
+.art-hill { fill: var(--art-hill); }
+.art-ink { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.art-play-bg { fill: var(--overlay); }
+.art-play { fill: var(--overlay-fg); }
+.art-btn { fill: var(--accent); }
+.art-btn--secondary { fill: var(--surface); stroke: var(--border-strong); }
+.art-btn-label { fill: var(--accent-fg); font-size: 13px; font-weight: 600; }
+.art-btn-label--secondary { fill: var(--fg); }
+.art-caption { fill: var(--muted); font-size: 12px; }
+.art-arrow { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.art-ok { fill: var(--success-bg); }
+.art-check { fill: none; stroke: var(--success-fg); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
