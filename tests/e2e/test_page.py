@@ -184,6 +184,7 @@ class Cdn:
     def __init__(self) -> None:
         self.files: dict[str, bytes] = {}
         self.missing: set[str] = set()
+        self.no_cors: set[str] = set()  # blocked by CORS, like documents on the real CDN
         self.requests: list[str] = []
         self.hold: set[str] = set()
         self.held: list[Route] = []
@@ -200,6 +201,10 @@ class Cdn:
             )
         elif name in self.hold:
             self.held.append(route)
+        elif name in self.no_cors:
+            # Playwright makes fulfilled cross-origin responses pass CORS even without the header,
+            # so reproduce what the page actually sees for the real CDN: fetch() rejects (TypeError).
+            route.abort("accessdenied")
         elif name in self.missing or name not in self.files:
             route.fulfill(status=404, body=b"", headers={"Access-Control-Allow-Origin": "*"})
         else:
@@ -390,6 +395,27 @@ def test_missing_cdn_file_is_reported(page: Page, server: tuple[str, Store], cdn
     assert "1 file is no longer available" in status(page)
     assert "alert--danger" in (page.get_attribute("#status", "class") or "")
     assert page.text_content("#item-1.is-failed .tile__status") == "Unavailable"  # not colour-only
+
+
+def test_file_without_cors_is_not_called_gone(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
+    # Discord's CDN serves documents with no CORS header: the fetch rejects with a TypeError.
+    # That says nothing about the file being gone, and the rest of the ZIP must still work.
+    base, store = server
+    token = make_link(store, cdn, [("ok.jpg", 0), ("doc.pdf", 0), ("gone.jpg", 0)], ctype=None)
+    cdn.no_cors.add("f1-doc.pdf")
+    cdn.missing.add("f2-gone.jpg")
+    page.goto(f"{base}/d#{token}")
+    wait_state(page, "ready")
+    with page.expect_download() as dl:
+        page.click("#btn-zip")
+    assert zip_entries(dl.value.path()) == {"ok.jpg": b"ok.jpg"}
+    wait_state(page, "done")
+    text = status(page)
+    assert "Zipped 1 of 3 files" in text, text
+    assert "1 file couldn't be downloaded by the browser" in text, text
+    assert "1 file is no longer available on Discord" in text, text  # only the real 404
+    assert page.text_content("#item-1 .tile__status") == "Not downloaded"
+    assert page.text_content("#item-2 .tile__status") == "Unavailable"
 
 
 def test_busy_marks_the_active_button(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
@@ -672,7 +698,7 @@ def test_invalid_token(page: Page, server: tuple[str, Store]) -> None:
     page.goto(f"{base}/d#{'x' * 43}")
     wait_state(page, "error")
     assert "expired or is invalid" in (page.text_content("#error-title") or "")
-    assert "Download attachments" in (page.text_content("#error-text") or "")  # says what to do
+    assert "Download media" in (page.text_content("#error-text") or "")  # says what to do
     assert page.is_hidden("#actions")
     assert page.locator("#grid li").count() == 0  # skeleton tiles gone
     assert "Loading" not in (page.text_content("#summary") or "") or page.is_hidden("#summary")
@@ -747,7 +773,7 @@ def test_expired_link_hides_actions(page: Page, server: tuple[str, Store]) -> No
     wait_state(page, "error", timeout=6000)
     assert page.evaluate("document.activeElement.id") == "error"  # focus isn't lost with the buttons
     assert "expired" in (page.text_content("#error-title") or "")
-    assert "Download attachments" in (page.text_content("#error-text") or "")  # what to do next
+    assert "Download media" in (page.text_content("#error-text") or "")  # what to do next
     assert page.is_hidden("#actions")
     assert page.is_disabled("#btn-zip") and page.is_disabled("#btn-files")
     assert page.evaluate("document.getElementById('grid').inert") is True

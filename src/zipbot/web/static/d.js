@@ -15,7 +15,7 @@ const PARALLEL = 3;
 const SAVE_GAP_MS = 300;
 const SPRITE = "/static/icons.svg";
 const SVG_NS = "http://www.w3.org/2000/svg";
-const COMMAND = "“Download attachments”";
+const COMMAND = "“Download media”";
 
 // Chromium's share limits: more files, more bytes or one type off the list rejects the whole set.
 const SHARE_MAX_FILES = 10;
@@ -333,8 +333,27 @@ function mark(i, ok, label) {
 
 async function fetchItem(item) {
   const res = await fetch(item.url, { mode: "cors", credentials: "omit", referrerPolicy: "no-referrer" });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.ok) throw Object.assign(new Error(`HTTP ${res.status}`), { status: res.status });
   return res;
+}
+
+// 403/404/410 from the CDN: the file (or its signed link) is gone. Anything else, e.g. the
+// TypeError a fetch gives when the CDN sends no CORS headers, says nothing about Discord.
+const GONE_STATUS = new Set([403, 404, 410]);
+
+function isGone(error) {
+  return GONE_STATUS.has(error?.status);
+}
+
+// counts.gone or counts.blocked, with the matching tile badge
+function fetchFailed(counts, i, error) {
+  if (isGone(error)) {
+    counts.gone++;
+    mark(i, false, "Unavailable");
+  } else {
+    counts.blocked++;
+    mark(i, false, "Not downloaded");
+  }
 }
 
 // Yields {i, res} or {i, error} in order, keeping up to PARALLEL requests in flight.
@@ -380,24 +399,32 @@ function saveBlob(blob, filename) {
   setTimeout(() => revoke(url), 60_000);
 }
 
-// counts: {ok, gone (not on Discord any more), failed (couldn't be written), renamed}
+// counts: {ok, gone (not on Discord any more), blocked (the browser couldn't fetch it),
+// failed (couldn't be written), renamed}
 function finish(verb, counts, nextStep) {
-  const { ok, gone, failed = 0 } = counts;
-  const total = ok + gone + failed;
+  const { ok, gone = 0, blocked = 0, failed = 0 } = counts;
+  const total = ok + gone + blocked + failed;
   $("hint").hidden = true;
   $("progress").hidden = true; // the alert below carries the result
   const problems = [];
-  if (gone) problems.push(`${plural(gone, "file")} ${gone === 1 ? "is" : "are"} no longer available on Discord.`);
-  if (failed) problems.push(`${plural(failed, "file")} couldn't be saved.`);
+  const next = [];
+  if (gone) {
+    problems.push(`${plural(gone, "file")} ${gone === 1 ? "is" : "are"} no longer available on Discord.`);
+    next.push(`If they still show in Discord, run ${COMMAND} again for fresh links.`);
+  }
+  if (blocked) {
+    problems.push(`${plural(blocked, "file")} couldn't be downloaded by the browser.`);
+    next.push(`Open ${blocked === 1 ? "it" : "them"} in Discord to save from there.`);
+  }
+  if (failed) {
+    problems.push(`${plural(failed, "file")} couldn't be saved.`);
+    next.push("Try again, or use Download ZIP.");
+  }
   if (counts.renamed) problems.push(`${plural(counts.renamed, "file")} got a “_” added to the name, because Windows blocks it.`);
   if (ok === 0) {
-    notify("danger", "None of the files could be downloaded",
-      `${problems.join(" ")} Run ${COMMAND} in Discord again to get fresh links.`);
-  } else if (gone || failed) {
-    const next = gone
-      ? `If they still show in Discord, run ${COMMAND} again for fresh links.`
-      : "Try again, or use Download ZIP.";
-    notify("danger", `${verb} ${ok} of ${plural(total, "file")}`, [...problems, next].join(" "));
+    notify("danger", "None of the files could be downloaded", [...problems, ...next].join(" "));
+  } else if (gone || blocked || failed) {
+    notify("danger", `${verb} ${ok} of ${plural(total, "file")}`, [...problems, ...next].join(" "));
   } else {
     notify("success", `${verb} ${plural(ok, "file")}`, [nextStep, ...problems].filter(Boolean).join(" "));
   }
@@ -433,7 +460,7 @@ async function run(btn, fn) {
 
 async function saveEach(indices) {
   const total = indices.length;
-  const counts = { ok: 0, gone: 0, failed: 0 };
+  const counts = { ok: 0, gone: 0, blocked: 0, failed: 0 };
   setProgress("Downloading files", 0, total);
   setTip(
     coarse()
@@ -442,8 +469,7 @@ async function saveEach(indices) {
   );
   for await (const { i, res, error } of fetchInOrder(indices)) {
     if (error) {
-      counts.gone++;
-      mark(i, false, "Unavailable");
+      fetchFailed(counts, i, error);
     } else {
       try {
         saveBlob(await res.blob(), flatName(state.items[i].name));
@@ -455,7 +481,7 @@ async function saveEach(indices) {
         mark(i, false, "Not saved");
       }
     }
-    setProgress("Downloading files", counts.ok + counts.gone + counts.failed, total);
+    setProgress("Downloading files", counts.ok + counts.gone + counts.blocked + counts.failed, total);
   }
   finish("Downloaded", counts, "Check your Downloads folder.");
 }
@@ -514,14 +540,13 @@ async function saveToFolder(picker, indices) {
     return saveEach(indices); // SecurityError (no user activation) and the like
   }
   const total = indices.length;
-  const counts = { ok: 0, gone: 0, failed: 0, renamed: 0 };
+  const counts = { ok: 0, gone: 0, blocked: 0, failed: 0, renamed: 0 };
   const dirs = new Map([["", root]]);
   const taken = new Map();
   setProgress("Saving to folder", 0, total);
   for await (const { i, res, error } of fetchInOrder(indices)) {
     if (error) {
-      counts.gone++;
-      mark(i, false, "Unavailable");
+      fetchFailed(counts, i, error);
     } else {
       let dir = null;
       let created = null; // a name we created in this run, removed again if the write fails
@@ -547,7 +572,7 @@ async function saveToFolder(picker, indices) {
         mark(i, false, "Not saved");
       }
     }
-    setProgress("Saving to folder", counts.ok + counts.gone + counts.failed, total);
+    setProgress("Saving to folder", counts.ok + counts.gone + counts.blocked + counts.failed, total);
   }
   finish("Downloaded", counts, "They're in the folder you picked.");
 }
@@ -574,14 +599,13 @@ function zipEntries(indices, counts) {
   return (async function* () {
     for await (const { i, res, error } of fetchInOrder(indices)) {
       if (error) {
-        counts.gone++;
-        mark(i, false, "Unavailable");
+        fetchFailed(counts, i, error);
       } else {
         yield { name: state.items[i].name, input: res, lastModified: new Date() };
         counts.ok++;
         mark(i, true, "Zipped");
       }
-      setProgress("Zipping files", counts.ok + counts.gone, total);
+      setProgress("Zipping files", counts.ok + counts.gone + counts.blocked, total);
     }
   })();
 }
@@ -623,7 +647,7 @@ async function streamZip(handle, indices, counts) {
 }
 
 async function saveZip(picker, indices, name) {
-  const counts = { ok: 0, gone: 0 };
+  const counts = { ok: 0, gone: 0, blocked: 0 };
   if (picker) {
     let handle = null;
     try {
@@ -695,8 +719,11 @@ function planShare() {
   });
   if (batch.length) batches.push(batch);
   // files/indices: the prepared batch (File objects and the items they came from).
-  // excluded/gone are Sets, so collecting a batch again never counts an item twice.
-  return { batches, excluded: new Set(excluded), gone: new Set(), next: 0, files: null, indices: [], ok: 0 };
+  // excluded/gone/blocked are Sets, so collecting a batch again never counts an item twice.
+  return {
+    batches, excluded: new Set(excluded), gone: new Set(), blocked: new Set(),
+    next: 0, files: null, indices: [], ok: 0,
+  };
 }
 
 async function readForShare(res) {
@@ -721,18 +748,19 @@ async function collectBatch(plan) {
   setProgress("Preparing files", 0, indices.length);
   for await (const { i, res, error } of fetchInOrder(indices)) {
     let blob = null;
-    let unreadable = Boolean(error);
+    let failure = error;
     if (!error) {
       try {
         blob = await readForShare(res);
         if (!blob) plan.excluded.add(i);
-      } catch {
-        unreadable = true; // the body broke off mid-way
+      } catch (e) {
+        failure = e; // the body broke off mid-way
       }
     }
-    if (unreadable) {
-      plan.gone.add(i);
-      mark(i, false, "Unavailable");
+    if (failure) {
+      const gone = isGone(failure);
+      (gone ? plan.gone : plan.blocked).add(i);
+      mark(i, false, gone ? "Unavailable" : "Not downloaded");
     } else if (blob && files.length && bytes + blob.size > SHARE_MAX_BYTES) {
       overflow.push(i);
     } else if (blob) {
@@ -832,13 +860,13 @@ async function shareSafely() {
 
 function shareDone(plan) {
   resetShare();
-  if (plan.ok === 0 && plan.gone.size === 0) {
+  if (plan.ok === 0 && plan.gone.size === 0 && plan.blocked.size === 0) {
     $("progress").hidden = true;
     notify("info", "These files can't be shared", `${excludedText(plan)} Download them instead.`,
       offerOthers([...plan.excluded]));
     return setPhase("ready");
   }
-  finish("Shared", { ok: plan.ok, gone: plan.gone.size });
+  finish("Shared", { ok: plan.ok, gone: plan.gone.size, blocked: plan.blocked.size });
   if (plan.excluded.size) {
     const box = $("status-text");
     box.textContent = [box.textContent, excludedText(plan)].filter(Boolean).join(" ");
