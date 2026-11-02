@@ -27,7 +27,8 @@ class Settings(BaseSettings):
     # Every attachment by default; e.g. `image,video` opts out of other files.
     media_types: Annotated[frozenset[str], NoDecode] = frozenset({"all"})
     dm_debounce_sec: float = Field(8, ge=0, le=60)
-    max_active_links_per_user: int = Field(20, ge=1, le=1000)
+    # ≥ 2: a panel holds its own link plus the basket link.
+    max_active_links_per_user: int = Field(20, ge=2, le=1000)
     resolve_rate_per_min: int = Field(30, ge=1, le=10_000)
     trusted_proxies: Annotated[tuple[IPv4Network | IPv6Network, ...], NoDecode] = (
         ip_network("127.0.0.1/32"),

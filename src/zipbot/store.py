@@ -25,6 +25,9 @@ MIN_LINK_SEC = 60
 # under ~80 MB of the container's 256 MB. When full, new links are refused, so nobody can evict
 # other users' links (security review v0 #3).
 MAX_ITEMS_TOTAL = 40_000
+# Per user, across their live links (a link plus the basket link at the default 100 files
+# each): a user's own oldest links go first, so one account holds at most ~1.25% of the total.
+MAX_ITEMS_PER_USER = 500
 
 
 def token_hash(token: str) -> str:
@@ -61,6 +64,8 @@ class Basket:
     entries: list[BasketEntry] = field(default_factory=list)
     touched_at: float = 0.0
     link_id: str | None = None  # the one live basket link; replaced when a new one is made
+    version: int = 0  # bumped whenever entries change
+    link_version: int = -1  # `version` when link_id was made
 
     @property
     def file_count(self) -> int:
@@ -131,9 +136,18 @@ class Store:
             raise LinkError("Discord file links expire too soon")
 
         self.sweep()
-        mine = [h for h, r in self._links.items() if r.owner_id == owner_id]
-        evict = mine[: max(0, len(mine) - self.max_active_links_per_user + 1)]
-        freed = sum(len(self._links[h].items) for h in evict)
+        mine = [h for h, r in self._links.items() if r.owner_id == owner_id]  # oldest first
+        held = sum(len(self._links[h].items) for h in mine)
+        budget = max(MAX_ITEMS_PER_USER, 2 * self.max_files_per_link)  # always fits link + basket
+        evict: list[str] = []
+        freed = 0
+        for h in mine:
+            if len(mine) - len(evict) < self.max_active_links_per_user and (
+                held - freed + len(items) <= budget
+            ):
+                break
+            evict.append(h)
+            freed += len(self._links[h].items)
         if self._items - freed + len(items) > MAX_ITEMS_TOTAL:
             raise LinkError("the bot is busy right now, please try again in a few minutes")
         for h in evict:
@@ -210,22 +224,29 @@ class Store:
             result = AddResult.FULL_FILES
         else:
             b.entries.append(BasketEntry(message_key, tuple(items)))
+            b.version += 1
             result = AddResult.ADDED
         if not b.entries:
             self._baskets.pop(user_id, None)
         return result, b
 
-    def basket_link(self, user_id: int) -> tuple[str, LinkRecord]:
-        """A fresh link for the whole basket. The previous basket link is revoked first, so each
-        user has at most one and re-rendering a panel doesn't use up their link cap."""
+    def basket_link(self, user_id: int, token: str | None = None) -> tuple[str, LinkRecord]:
+        """A link for the whole basket. `token` (a basket link a panel already shows) is kept if
+        it is still the basket's live link and the basket hasn't changed since; otherwise the
+        previous basket link is revoked and a new one made, so each user has at most one and
+        re-rendering a panel doesn't use up their link cap."""
         b = self.basket(user_id)
         if b is None or not b.entries:
             raise LinkError("your basket is empty")
+        if token and b.link_version == b.version:
+            current = self.resolve(token)
+            if current and current.link_id == b.link_id and current.owner_id == user_id:
+                return token, current
         if b.link_id:
             self.revoke(b.link_id, user_id)
             b.link_id = None
         token, record = self.create_link(user_id, b.items())
-        b.link_id = record.link_id
+        b.link_id, b.link_version = record.link_id, b.version
         return token, record
 
     def clear_basket(self, user_id: int) -> bool:

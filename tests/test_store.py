@@ -219,3 +219,37 @@ def test_clear_basket_revokes_its_link(store: Store) -> None:
     assert store.resolve(token) is None
     store.add_to_basket(7, "m1", [item()])
     assert store.clear_basket(7)  # no link was made: nothing to revoke
+
+
+def test_per_user_item_budget(clock: Clock, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(store_mod, "MAX_ITEMS_PER_USER", 6)
+    s = Store(
+        link_ttl_sec=3600,
+        basket_ttl_sec=3600,
+        max_files_per_link=3,
+        basket_max_messages=3,
+        max_active_links_per_user=20,
+        clock=clock,
+    )
+    three = [item(f"{i}.jpg") for i in range(3)]
+    t1, _ = s.create_link(7, three)
+    t2, _ = s.create_link(7, three)
+    t_other, _ = s.create_link(8, three)
+    t3, _ = s.create_link(7, three[:1])  # 7 would hold 7 > 6 items: their own oldest goes
+    assert s.resolve(t1) is None
+    assert s.resolve(t2) and s.resolve(t3) and s.resolve(t_other)
+    assert s.item_count == 7
+
+
+def test_basket_link_is_reused_while_unchanged(store: Store) -> None:
+    store.add_to_basket(7, "m1", [item("a.jpg")])
+    t1, r1 = store.basket_link(7)
+    assert store.basket_link(7, t1) == (t1, r1)  # same contents: the panel's link stays valid
+    t2, _ = store.basket_link(7)  # no token to hand (a new panel): re-minted
+    assert store.resolve(t1) is None
+    store.add_to_basket(7, "m2", [item("b.jpg")])
+    t3, r3 = store.basket_link(7, t2)  # contents changed: re-minted
+    assert t3 != t2 and store.resolve(t2) is None and len(r3.items) == 2
+    other, _ = store.create_link(7, [item()])
+    assert store.basket_link(7, other)[0] != other  # only the basket's own link is reused
+    assert store.basket_link(7, "bogus")[0]
