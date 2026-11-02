@@ -46,7 +46,7 @@ Ephemeral reply: **one Components V2 panel** (`views.py`, a `LayoutView` with on
 ```
 📦 12 files · 48.3 MB · link expires in 59 min   (+ "only the first N of M" note)
 [thumb][thumb][thumb]…                            MediaGallery, ≤ 10 images/videos (+N more)
--# 📎 report.pdf · notes.txt · +3 more            other files; names escaped, one line
+-# 📎 logo.svg · scan.tiff · +3 more              no tile: not jpg/png/gif/webp/avif/mp4/webm/mov; escaped, one line
 [⬇️ Download all ↗] [🗜️ Download ZIP ↗]           #token.files / #token.zip
 ──────────────────────────────────────
 🧺 Basket: 7 files from 3 messages                (only with a non-empty basket)

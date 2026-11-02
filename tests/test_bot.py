@@ -282,6 +282,51 @@ def test_gallery_only_shows_allowed_thumbnails(state: Any) -> None:
     assert "-# 📎 b.jpg · song.mp3" in texts(view)
 
 
+def test_gallery_leaves_out_formats_discord_cannot_render(state: Any) -> None:
+    items = [
+        item("logo.svg", ctype="image/svg+xml"),  # a broken tile on Android (seen live)
+        item("photo.png", ctype="image/png"),
+        item("icon.ico", ctype="image/x-icon"),
+        item("clip.mov", ctype="video/quicktime"),
+        item("scan.tiff", ctype="image/tiff"),
+    ]
+    view = panel(handlers.link_reply(state, 7, items, "k"))
+    assert len(gallery(view)) == 2
+    assert all("photo.png" in t["media"]["url"] or "clip.mov" in t["media"]["url"] for t in gallery(view))
+    assert "-# 📎 logo.svg · icon.ico · scan.tiff" in texts(view)
+
+
+@pytest.mark.parametrize(
+    ("name", "ctype", "embed", "shown"),
+    [
+        *((f"a{ext}", None, False, True) for ext in sorted(views.GALLERY_EXTS)),
+        *((f"A{ext.upper()}", None, False, True) for ext in sorted(views.GALLERY_EXTS)),
+        *(("upload", ctype, False, True) for ctype in sorted(views.GALLERY_TYPES)),
+        ("a.bin", "image/png", False, False),  # application/octet-stream by its extension
+        ("a.jpg", "image/JPEG; charset=binary", False, True),
+        ("photo.jpg_large", "image/jpeg", False, True),  # unknown extension: the type decides
+        ("logo.svg", "image/svg+xml", False, False),
+        ("logo.svg", None, False, False),
+        ("logo.svg", "image/png", False, False),  # a known extension outside the list wins
+        ("logo.png", "image/svg+xml", False, False),
+        ("icon.ico", "image/vnd.microsoft.icon", False, False),
+        ("scan.tif", None, False, False),
+        ("scan.tiff", "image/tiff", False, False),
+        ("img.heic", "image/heic", False, False),
+        ("img.heic", None, False, False),
+        ("pic.bmp", "image/bmp", False, False),
+        ("clip.mkv", "video/x-matroska", False, False),
+        ("clip.avi", None, False, False),
+        ("embed-1", None, True, True),  # an untyped embed: Discord's proxy made the preview
+        ("embed-1", None, False, False),
+        ("pic.svg", None, True, False),
+    ],
+)
+def test_in_gallery(name: str, ctype: str | None, embed: bool, shown: bool) -> None:
+    kw: dict[str, Any] = {"fallback_kind": "image"} if embed else {}
+    assert views.in_gallery(item(name, ctype=ctype, **kw)) is shown
+
+
 @pytest.mark.parametrize(
     ("name", "shown"),
     [

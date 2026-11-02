@@ -11,11 +11,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import mimetypes
 import re
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any, Protocol, cast
 
 import discord
@@ -23,12 +25,27 @@ from discord import app_commands
 
 from zipbot.config import Settings
 from zipbot.contract import thumbnail
-from zipbot.media import is_allowed_url
+from zipbot.media import FILE_KIND, MediaItem, is_allowed_url
 from zipbot.store import AddResult, Basket, LinkError, LinkRecord, Store
 
 LINK_ID = r"(?P<link_id>[A-Za-z0-9_-]{6,32})"
 
 GALLERY_MAX = 10  # Discord's limit per media gallery
+# What Discord's media proxy renders as a gallery tile. Anything else (SVG: a broken tile on
+# Android, seen live; .ico, .tiff, .heic...) is listed by name with the other files.
+GALLERY_TYPES = frozenset(
+    {
+        "image/jpeg",
+        "image/png",
+        "image/gif",
+        "image/webp",
+        "image/avif",
+        "video/mp4",
+        "video/webm",
+        "video/quicktime",
+    }
+)
+GALLERY_EXTS = frozenset({".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".mp4", ".webm", ".mov"})
 NAMES_MAX = 5  # other files are listed by name, then "+N more"
 NAME_CHARS = 40
 # Ids of a panel's own link buttons. A click re-renders the panel and takes their URLs back
@@ -284,6 +301,21 @@ def link_row(
     )
 
 
+def in_gallery(item: MediaItem) -> bool:
+    """Whether the item's format renders as a gallery tile (GALLERY_TYPES / GALLERY_EXTS).
+
+    A known extension outside the list wins over the content type (an `.svg` sent as
+    `image/png` is still SVG). Without either, only an embed counts: Discord's proxy made it.
+    """
+    ctype = (item.content_type or "").partition(";")[0].strip().lower()
+    ext = PurePosixPath(item.filename).suffix.lower()
+    if ext and ext not in GALLERY_EXTS and mimetypes.guess_type(f"x{ext}")[0]:
+        return False
+    if ctype:
+        return ctype in GALLERY_TYPES
+    return ext in GALLERY_EXTS or (not ext and item.fallback_kind != FILE_KIND)
+
+
 def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
     """Thumbnails of the first 10 images/videos, then the names of the other files."""
     gallery: list[discord.MediaGalleryItem] = []
@@ -291,7 +323,7 @@ def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
     others: list[str] = []
     for item, name in zip(record.items, record.names, strict=True):
         thumb = thumbnail(item)
-        if thumb is None or not is_allowed_url(thumb):
+        if thumb is None or not is_allowed_url(thumb) or not in_gallery(item):
             others.append(name)
         elif len(gallery) < GALLERY_MAX:
             # Keep spoilered attachments blurred, as Discord shows them in the original message.
