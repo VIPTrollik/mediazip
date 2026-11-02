@@ -6,7 +6,8 @@ puts the burst into the user's basket if they want to combine it with more.
 
 A burst is bounded (security review v0 #1): it holds at most MAX_FILES_PER_LINK items and is
 sent as soon as it is full, or at most 3x DM_DEBOUNCE_SEC (capped at BURST_MAX_SEC) after its
-first message, however often the user keeps sending.
+first message, however often the user keeps sending. Each user starts at most
+BURSTS_PER_MIN bursts a minute; beyond that one short notice is sent, not one per message.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from discord.ext import commands
 
 from zipbot import handlers
 from zipbot.media import MediaItem, extract, payload_from_message
+from zipbot.views import UserCooldown
 
 if TYPE_CHECKING:
     from zipbot.bot import ZipBot
@@ -34,8 +36,10 @@ HELP = (
     "download link for all of them. You can also use **Apps → Download attachments** on any message."
 )
 BURST_MAX_SEC = 30  # a burst's whole lifetime is at most min(3 * debounce, this)
+BUSY = "You're sending a lot at once — wait a minute, then forward the rest."
+BURSTS_PER_MIN = 5
 HELP_COOLDOWN_SEC = 5 * 60  # text-only DMs get the help text at most this often
-MAX_HELP_USERS = 10_000
+MAX_NOTICE_USERS = 10_000
 
 
 @dataclass
@@ -60,7 +64,9 @@ class DmCog(commands.Cog):
         self.pending: dict[int, Burst] = {}
         self.clock = time.monotonic
         self.sending: set[asyncio.Task[None]] = set()  # full bursts, already detached from pending
-        self.helped: OrderedDict[int, float] = OrderedDict()  # user → last help reply, oldest first
+        self.burst_cooldown = UserCooldown(BURSTS_PER_MIN, 60)
+        self.helped: OrderedDict[int, float] = OrderedDict()  # user → no help text until then
+        self.warned: OrderedDict[int, float] = OrderedDict()  # user → no BUSY notice until then
 
     async def cog_unload(self) -> None:
         for task in [*(b.task for b in self.pending.values() if b.task), *self.sending]:
@@ -77,11 +83,15 @@ class DmCog(commands.Cog):
         items = extract(payload_from_message(message), kinds=kinds)
         burst = self.pending.get(user_id)
         if not items:
-            if burst is None and self.may_help(user_id):  # text sent alongside a burst is fine
-                await message.channel.send(HELP)
+            if burst is None and self.once(self.helped, user_id, HELP_COOLDOWN_SEC):
+                await message.channel.send(HELP)  # text sent alongside a burst is fine
             return
         now = self.clock()
         if burst is None:
+            if retry := self.burst_cooldown.retry_after(user_id):
+                if self.once(self.warned, user_id, retry):
+                    await message.channel.send(BUSY)
+                return
             burst = self.pending[user_id] = Burst(message.channel, started=now)
         burst.add(items, settings.max_files_per_link)
         if burst.task:
@@ -97,15 +107,17 @@ class DmCog(commands.Cog):
         delay = max(0.0, min(debounce, burst.started + lifetime - now))
         burst.task = asyncio.create_task(self.flush(user_id, burst, delay))
 
-    def may_help(self, user_id: int) -> bool:
+    def once(self, seen: OrderedDict[int, float], user_id: int, window: float) -> bool:
+        """True at most once per `window` per user. `seen` (user → until) is bounded."""
         now = self.clock()
-        while self.helped and next(iter(self.helped.values())) + HELP_COOLDOWN_SEC <= now:
-            self.helped.popitem(last=False)
-        if user_id in self.helped:
+        while seen and next(iter(seen.values())) <= now:
+            seen.popitem(last=False)
+        if seen.get(user_id, now) > now:
             return False
-        self.helped[user_id] = now
-        if len(self.helped) > MAX_HELP_USERS:
-            self.helped.popitem(last=False)
+        seen.pop(user_id, None)
+        seen[user_id] = now + window
+        if len(seen) > MAX_NOTICE_USERS:
+            seen.popitem(last=False)
         return True
 
     async def flush(self, user_id: int, burst: Burst, delay: float) -> None:

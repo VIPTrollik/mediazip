@@ -14,10 +14,10 @@ from helpers import EX, fixture, resolved_message
 from zipbot.__main__ import configure_logging
 from zipbot.bot import ZipBot
 from zipbot.cogs import dm as dm_mod
-from zipbot.cogs.dm import HELP, HELP_COOLDOWN_SEC, DmCog
+from zipbot.cogs.dm import BUSY, HELP, HELP_COOLDOWN_SEC, DmCog
 from zipbot.config import Settings
 from zipbot.store import Store
-from zipbot.views import ID_FILES
+from zipbot.views import ID_FILES, UserCooldown
 
 STATE = cast(Any, SimpleNamespace(http=None))
 TOKEN = re.compile(r"/d#([A-Za-z0-9_-]{43})")
@@ -259,8 +259,26 @@ async def test_help_has_a_cooldown(cog: DmCog) -> None:
 
 
 async def test_help_registry_is_bounded(cog: DmCog, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(dm_mod, "MAX_HELP_USERS", 2)
+    monkeypatch.setattr(dm_mod, "MAX_NOTICE_USERS", 2)
     ch = Channel()
     for user in range(4):
         await cog.on_message(dm(ch, user, user=user))
     assert len(cog.helped) == 2 and len(ch.sent) == 4
+
+
+async def test_bursts_are_rate_limited_with_one_notice(cog: DmCog) -> None:
+    cog.burst_cooldown = UserCooldown(rate=1, per=60)
+    clock = SimpleNamespace(t=0.0)
+    cog.clock = lambda: clock.t
+    ch = Channel()
+    await cog.on_message(dm(ch, 1, files=attachments(1)))
+    await settle(cog)
+    for n in range(2, 6):  # a second burst within the minute, message after message
+        await cog.on_message(dm(ch, n, files=attachments(1)))
+    await settle(cog)
+    assert [c for c, _ in ch.sent][1:] == [BUSY]  # one notice, not one per message
+    assert 7 not in cog.pending
+    other = Channel()
+    await cog.on_message(dm(other, 9, files=attachments(1), user=8))  # per user
+    await settle(cog)
+    assert len(other.sent) == 1 and other.sent[0][1] is not None
