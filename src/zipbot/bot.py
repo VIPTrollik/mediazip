@@ -11,7 +11,7 @@ from discord.ext import commands
 
 from zipbot.config import Settings
 from zipbot.store import Store
-from zipbot.views import COOLDOWN_TEXT, DYNAMIC_ITEMS, ButtonCooldown, Panels
+from zipbot.views import COOLDOWN_TEXT, DYNAMIC_ITEMS, Panels, UserCooldown
 
 log = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class ZipBot(commands.Bot):
         self.settings = settings
         self.store = store
         self.panels = Panels()  # each user's one live reply panel
-        self.button_cooldown = ButtonCooldown()
+        self.button_cooldown = UserCooldown()
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:

@@ -20,6 +20,7 @@ from zipbot.views import (
     BASKET_CLEARED,
     BASKET_EMPTY,
     DYNAMIC_ITEMS,
+    ID_BASKET,
     ID_FILES,
     ID_ZIP,
     LINK_EXPIRED,
@@ -29,9 +30,9 @@ from zipbot.views import (
     AddLinkToBasketButton,
     BasketClearButton,
     BasketLinkButton,
-    ButtonCooldown,
     Panels,
     RevokeButton,
+    UserCooldown,
     format_size,
     safe_name,
 )
@@ -44,7 +45,7 @@ TOKEN_IN_URL = re.compile(r"/d#([A-Za-z0-9_-]{43})(\.files|\.zip)?$")
 def state(settings: Settings) -> Any:
     store = Store.from_settings(settings)
     store.clock = lambda: EX - 24 * 3600
-    return SimpleNamespace(store=store, settings=settings, panels=Panels(), button_cooldown=ButtonCooldown())
+    return SimpleNamespace(store=store, settings=settings, panels=Panels(), button_cooldown=UserCooldown())
 
 
 _message_ids = iter(range(1000, 10**6))
@@ -124,7 +125,7 @@ def main_urls(view: Any) -> tuple[str, str]:
 
 
 def basket_zip_url(view: Any) -> str | None:
-    return next((c["url"] for c in link_buttons(view) if c["label"] == "Basket ZIP" and "id" not in c), None)
+    return next((c["url"] for c in link_buttons(view) if c.get("id") == ID_BASKET), None)
 
 
 def media_payload() -> dict[str, Any]:
@@ -245,7 +246,8 @@ def test_panel_stays_within_discord_limits(state: Any) -> None:
     assert len(gallery(view)) == 10
     assert all(len(b["url"]) <= 512 for b in link_buttons(view))
     assert view.content_length() <= 4000
-    names = next(t for t in texts(view) if t.startswith("-# 📎"))
+    hidden, names = next(t for t in texts(view) if "📎" in t).split("\n")
+    assert hidden == "-# 🖼️ +50 more images and videos"  # beyond the gallery's 10
     assert names.endswith(" · +35 more") and names.count(" · ") == 5
 
 
@@ -448,7 +450,7 @@ async def test_dm_panel_is_edited_but_not_tracked(state: Any) -> None:
 
 
 async def test_button_cooldown(state: Any) -> None:
-    state.button_cooldown = ButtonCooldown(rate=2, per=60, cap=2)
+    state.button_cooldown = UserCooldown(rate=2, per=60, cap=2)
     button = BasketClearButton()
     first = interaction(state)
     assert await button.interaction_check(first) and await button.interaction_check(first)
@@ -513,28 +515,72 @@ async def test_new_panel_deletes_the_previous_one(state: Any) -> None:
     clock = Clock()
     panels = Panels(clock=clock)
     first, second, third = interaction(state), interaction(state), interaction(state)
-    panels.track(7, first, 1)
+    panels.opened(7, first, 1, panels.ticket())
     clock.t += PANEL_TOKEN_SEC - 1
-    panels.track(7, second, 2)
+    panels.opened(7, second, 2, panels.ticket())
     await drain()
     first.delete_original_response.assert_awaited_once()
     clock.t += PANEL_TOKEN_SEC  # too old: its token can't delete any more
-    panels.track(7, third, 3)
+    panels.opened(7, third, 3, panels.ticket())
     await drain()
     second.delete_original_response.assert_not_awaited()
     assert len(panels) == 1
 
 
-async def test_click_on_the_live_panel_keeps_it(state: Any) -> None:
+async def test_click_on_the_live_panel_refreshes_it(state: Any) -> None:
     panels = Panels()
-    command, click, unknown = interaction(state), interaction(state), interaction(state)
-    panels.track(7, command, 5)
-    panels.track(7, click, 5)  # the button edited message 5 in place
-    panels.track(8, unknown, None)
-    panels.track(8, interaction(state), 6)  # unknown id: never risk deleting the edited panel
+    command, click = interaction(state), interaction(state)
+    panels.opened(7, command, 5, panels.ticket())
+    panels.clicked(7, click, 5, panels.ticket())  # the button edited message 5 in place
+    later = interaction(state)
+    panels.opened(7, later, 6, panels.ticket())
     await drain()
     command.delete_original_response.assert_not_awaited()
-    unknown.delete_original_response.assert_not_awaited()
+    click.delete_original_response.assert_awaited_once()  # deleted with the fresh token
+
+
+async def test_click_on_an_older_panel_keeps_the_newer_one(state: Any) -> None:
+    panels = Panels()
+    newer = interaction(state)
+    panels.opened(7, newer, 2, panels.ticket())
+    stale_click = interaction(state)
+    panels.clicked(7, stale_click, 1, panels.ticket())  # message 1: >14 min old, or from before a restart
+    panels.opened(7, interaction(state), 3, panels.ticket())
+    await drain()
+    newer.delete_original_response.assert_awaited_once()  # the live one, not message 1
+    stale_click.delete_original_response.assert_not_awaited()
+    # With nothing live, a click on any panel takes over.
+    lone = Panels()
+    lone.clicked(8, stale_click, 1, lone.ticket())
+    assert len(lone) == 1
+
+
+async def test_click_on_a_panel_being_deleted_is_ignored(state: Any) -> None:
+    panels = Panels()
+    a, b = interaction(state), interaction(state)
+    panels.opened(7, a, 1, panels.ticket())
+    panels.opened(7, b, 2, panels.ticket())  # A's delete is now in flight
+    panels.clicked(7, interaction(state), 1, panels.ticket())  # the user clicks A before it lands
+    await drain()
+    b.delete_original_response.assert_not_awaited()  # B survives
+    a.delete_original_response.assert_awaited_once()
+
+
+async def test_out_of_order_replies_keep_the_newest(state: Any) -> None:
+    panels = Panels()
+    older, newer = interaction(state), interaction(state)
+    t_old, t_new = panels.ticket(), panels.ticket()  # taken before each send
+    panels.opened(7, newer, 2, t_new)  # the newer reply's response came back first
+    panels.opened(7, older, 1, t_old)
+    await drain()
+    older.delete_original_response.assert_awaited_once()
+    newer.delete_original_response.assert_not_awaited()
+    late_click = interaction(state)
+    panels.clicked(7, late_click, 2, t_old)  # a click whose edit started before the newer reply
+    panels.opened(7, interaction(state), 3, panels.ticket())
+    await drain()
+    newer.delete_original_response.assert_awaited_once()
+    late_click.delete_original_response.assert_not_awaited()
 
 
 async def test_delete_failure_is_swallowed(state: Any) -> None:
@@ -542,8 +588,8 @@ async def test_delete_failure_is_swallowed(state: Any) -> None:
     old = interaction(state)
     response = cast(Any, SimpleNamespace(status=404, reason="Not Found"))
     old.delete_original_response.side_effect = discord.NotFound(response, "Unknown Message")
-    panels.track(7, old, 1)
-    panels.track(7, interaction(state), 2)
+    panels.opened(7, old, 1, panels.ticket())
+    panels.opened(7, interaction(state), 2, panels.ticket())
     await drain()
     old.delete_original_response.assert_awaited_once()
     assert not panels._tasks  # finished and released
@@ -553,11 +599,45 @@ async def test_registry_is_bounded(state: Any) -> None:
     clock = Clock()
     panels = Panels(clock=clock, cap=3)
     for user in range(5):
-        panels.track(user, interaction(state), user)
-    assert len(panels) == 3
+        panels.opened(user, interaction(state), user, panels.ticket())
+        panels.opened(user, interaction(state), 100 + user, panels.ticket())
+    assert len(panels) == 3 and len(panels._doomed) == 5  # doomed is capped at 2 x cap = 6
+    panels.opened(5, interaction(state), 6, panels.ticket())
+    for n in range(7, 12):
+        panels.opened(5, interaction(state), n, panels.ticket())
+    assert len(panels._doomed) == 6
     clock.t += PANEL_TOKEN_SEC
-    panels.track(99, interaction(state), 99)
+    panels.opened(99, interaction(state), 99, panels.ticket())
     assert len(panels) == 1  # stale entries are dropped on access
+    await drain()
+
+
+async def test_button_on_an_old_panel_edits_it_without_taking_over(state: Any) -> None:
+    old_view, old_record = link_of(state)  # e.g. still visible from before a restart
+    live = interaction(state)
+    await views.show(live, panel(link_of(state)[0]))
+    click = interaction(state, message=message_of(old_view))
+    await RevokeButton(old_record.link_id).callback(click)
+    await drain()
+    click.response.edit_message.assert_awaited_once()
+    live.delete_original_response.assert_not_awaited()  # the newer panel keeps its URLs
+    nxt = interaction(state)
+    await views.show(nxt, panel(link_of(state)[0]))
+    await drain()
+    live.delete_original_response.assert_awaited_once()  # it is still the live one
+    click.delete_original_response.assert_not_awaited()
+
+
+async def test_revoke_keeps_the_shown_basket_link(state: Any) -> None:
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    view, record = link_of(state)
+    shown = basket_zip_url(view)
+    assert shown
+    inter = interaction(state, message=message_of(view))
+    await RevokeButton(record.link_id).callback(inter)
+    edited = inter.response.edit_message.call_args.kwargs["view"]
+    assert basket_zip_url(edited) == shown  # basket unchanged: Basket ZIP elsewhere keeps working
+    assert state.store.resolve(token_of(shown))
 
 
 async def test_reply_is_sent_before_the_old_panel_is_deleted(state: Any) -> None:

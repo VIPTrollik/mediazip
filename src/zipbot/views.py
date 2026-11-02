@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import itertools
 import re
 import time
 from collections import OrderedDict
@@ -32,7 +33,7 @@ NAMES_MAX = 5  # other files are listed by name, then "+N more"
 NAME_CHARS = 40
 # Ids of a panel's own link buttons. A click re-renders the panel and takes their URLs back
 # from the message, because the store keeps only token hashes. Far above Discord's auto ids.
-ID_FILES, ID_ZIP = 901, 902
+ID_FILES, ID_ZIP, ID_BASKET = 901, 902, 903
 
 PANEL_TOKEN_SEC = 14 * 60  # an interaction token can edit/delete its message for 15 min
 MAX_PANELS = 1_000  # each entry holds an Interaction (a few KB of payload)
@@ -55,7 +56,7 @@ class AppState(Protocol):
     store: Store
     settings: Settings
     panels: Panels
-    button_cooldown: ButtonCooldown
+    button_cooldown: UserCooldown
 
 
 def app(interaction: discord.Interaction) -> AppState:
@@ -77,37 +78,74 @@ class _Panel:
     interaction: discord.Interaction
     message_id: int | None
     at: float
+    ticket: int
 
 
 class Panels:
     """user id → their live ephemeral panel, kept as the interaction that last touched it: its
     token can still delete the message for 15 minutes. In memory only; after a restart old
-    panels just stay until the user dismisses them."""
+    panels just stay until the user dismisses them.
+
+    Every reply takes a ticket before its (awaited) send or edit, so a reply that lands late
+    never replaces a newer panel; panels being deleted ignore clicks."""
 
     def __init__(self, *, clock: Callable[[], float] = time.monotonic, cap: int = MAX_PANELS) -> None:
         self.clock = clock
         self.cap = cap
         self._live: OrderedDict[int, _Panel] = OrderedDict()  # oldest first
+        self._doomed: OrderedDict[int, None] = OrderedDict()  # message ids deleted or being deleted
+        self._tickets = itertools.count(1)
         self._tasks: set[asyncio.Task[None]] = set()  # pending deletes (keep a reference)
 
-    def track(self, user_id: int, interaction: discord.Interaction, message_id: int | None) -> None:
-        """`interaction` now owns the user's panel; delete the previous panel in the background,
-        unless it is this same message (a button edited it in place)."""
+    def ticket(self) -> int:
+        return next(self._tickets)
+
+    def opened(
+        self, user_id: int, interaction: discord.Interaction, message_id: int | None, ticket: int
+    ) -> None:
+        """A new panel was sent: it replaces the live one, which is deleted in the background.
+        If a newer panel landed first, this one lost and is deleted instead."""
+        live = self._get(user_id)
+        if live is not None and live.ticket > ticket:
+            self._delete(interaction, message_id)
+            return
+        self._set(user_id, _Panel(interaction, message_id, self.clock(), ticket))
+        if live is not None and live.message_id != message_id:
+            self._delete(live.interaction, live.message_id)
+
+    def clicked(self, user_id: int, interaction: discord.Interaction, message_id: int, ticket: int) -> None:
+        """A button edited `message_id` in place. Only the live panel (or any panel, if none is
+        live) takes the fresh token: a click on an older panel never deletes the newer one."""
+        if message_id in self._doomed:
+            return
+        live = self._get(user_id)
+        if live is not None and (live.message_id != message_id or live.ticket > ticket):
+            return
+        self._set(user_id, _Panel(interaction, message_id, self.clock(), ticket))
+
+    def _get(self, user_id: int) -> _Panel | None:
         now = self.clock()
         while self._live and next(iter(self._live.values())).at + PANEL_TOKEN_SEC <= now:
             self._live.popitem(last=False)  # token too old to delete with: forget it
-        old = self._live.pop(user_id, None)
-        self._live[user_id] = _Panel(interaction, message_id, now)
+        return self._live.get(user_id)
+
+    def _set(self, user_id: int, panel: _Panel) -> None:
+        self._live.pop(user_id, None)
+        self._live[user_id] = panel
         if len(self._live) > self.cap:
             self._live.popitem(last=False)
-        if old is None or (message_id is not None and old.message_id in (None, message_id)):
-            return  # nothing to delete, or a click on that panel (unknown id: never risk it)
-        task = asyncio.create_task(self._delete(old.interaction))
+
+    def _delete(self, interaction: discord.Interaction, message_id: int | None) -> None:
+        if message_id is not None:
+            self._doomed[message_id] = None
+            if len(self._doomed) > 2 * self.cap:
+                self._doomed.popitem(last=False)
+        task = asyncio.create_task(self._delete_now(interaction))
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
 
     @staticmethod
-    async def _delete(interaction: discord.Interaction) -> None:
+    async def _delete_now(interaction: discord.Interaction) -> None:
         with contextlib.suppress(discord.HTTPException):  # dismissed, already gone, token expired
             await interaction.delete_original_response()
 
@@ -120,10 +158,12 @@ async def show(interaction: discord.Interaction, reply: Reply) -> None:
     if isinstance(reply, str):
         await interaction.response.send_message(reply, ephemeral=True)
         return
+    panels = app(interaction).panels
+    ticket = panels.ticket()
     response = await interaction.response.send_message(view=reply, ephemeral=True)
     message_id = getattr(response, "message_id", None)
-    app(interaction).panels.track(
-        interaction.user.id, interaction, message_id if isinstance(message_id, int) else None
+    panels.opened(
+        interaction.user.id, interaction, message_id if isinstance(message_id, int) else None, ticket
     )
 
 
@@ -133,14 +173,17 @@ async def update(interaction: discord.Interaction, reply: Reply) -> None:
     if isinstance(reply, str) or message is None or not message.flags.components_v2:
         await show(interaction, reply)  # notices; v0.0.0 replies can't become a panel
         return
+    panels = app(interaction).panels
+    ticket = panels.ticket()
     await interaction.response.edit_message(view=reply)
     if message.flags.ephemeral:  # DM replies are ordinary messages and are never deleted
-        app(interaction).panels.track(interaction.user.id, interaction, message.id)
+        panels.clicked(interaction.user.id, interaction, message.id, ticket)
 
 
-class ButtonCooldown:
-    """Per-user rate limit for buttons: DynamicItem callbacks don't run app_commands checks, and
-    every click can make a link (security review v0 #3)."""
+class UserCooldown:
+    """Per-user rate limit (bounded). Used for buttons, whose DynamicItem callbacks don't run
+    app_commands checks while every click can make a link (security review v0 #3), and for DM
+    bursts."""
 
     def __init__(self, rate: int = 10, per: float = 60, *, cap: int = 10_000) -> None:
         self.rate, self.per, self.cap = rate, per, cap
@@ -176,8 +219,8 @@ def format_size(n: int) -> str:
     return f"{n / 1024**3:.2f} GB"
 
 
-def plural(n: int, word: str) -> str:
-    return f"{n} {word}{'' if n == 1 else 's'}"
+def plural(n: int, word: str, many: str | None = None) -> str:
+    return f"{n} {word if n == 1 else many or word + 's'}"
 
 
 def link_summary(record: LinkRecord, *, truncated_from: int | None = None, head: str | None = None) -> str:
@@ -244,6 +287,7 @@ def link_row(
 def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
     """Thumbnails of the first 10 images/videos, then the names of the other files."""
     gallery: list[discord.MediaGalleryItem] = []
+    hidden = 0  # media beyond the gallery's 10
     others: list[str] = []
     for item, name in zip(record.items, record.names, strict=True):
         thumb = thumbnail(item)
@@ -252,13 +296,18 @@ def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
         elif len(gallery) < GALLERY_MAX:
             # Keep spoilered attachments blurred, as Discord shows them in the original message.
             gallery.append(discord.MediaGalleryItem(thumb, spoiler=item.filename.startswith("SPOILER_")))
+        else:
+            hidden += 1
     parts: list[discord.ui.Item[Any]] = []
     if gallery:
         parts.append(discord.ui.MediaGallery(*gallery))
+    lines = [f"-# 🖼️ +{plural(hidden, 'more image or video', 'more images and videos')}"] if hidden else []
     if others:
         names = " · ".join(safe_name(n) for n in others[:NAMES_MAX])
         more = f" · +{len(others) - NAMES_MAX} more" if len(others) > NAMES_MAX else ""
-        parts.append(discord.ui.TextDisplay(f"-# 📎 {names}{more}"))
+        lines.append(f"-# 📎 {names}{more}")
+    if lines:
+        parts.append(discord.ui.TextDisplay("\n".join(lines)))
     return parts
 
 
@@ -273,7 +322,9 @@ def layout(*parts: discord.ui.Item[Any] | str | None) -> discord.ui.LayoutView:
     return detached(view)
 
 
-def basket_parts(state: AppState, user_id: int, link_id: str | None) -> list[discord.ui.Item[Any]]:
+def basket_parts(
+    state: AppState, user_id: int, link_id: str | None, basket_token: str | None = None
+) -> list[discord.ui.Item[Any]]:
     """Below a link: the basket line and one row: Add to basket, Basket ZIP, Clear, Revoke."""
     basket = state.store.basket(user_id)
     parts: list[discord.ui.Item[Any]] = [discord.ui.Separator()]
@@ -281,9 +332,12 @@ def basket_parts(state: AppState, user_id: int, link_id: str | None) -> list[dis
     if basket is not None and basket.entries:
         parts.append(discord.ui.TextDisplay(basket_line(basket)))
         with contextlib.suppress(LinkError):  # e.g. a basket file's CDN URL expires soon
-            token, _ = state.store.basket_link(user_id)
+            # An in-place edit keeps the link it shows while the basket is unchanged; a new panel
+            # can't recover a token (only hashes are stored), so it gets a new one and older
+            # panels' Basket ZIP stops working.
+            token, _ = state.store.basket_link(user_id, basket_token)
             url = page_url(state.settings.public_base_url, token, "zip")
-            buttons.append(discord.ui.Button(label="Basket ZIP", emoji="🧺", url=url))
+            buttons.append(discord.ui.Button(label="Basket ZIP", emoji="🧺", url=url, id=ID_BASKET))
         buttons.append(BasketClearButton())
     if link_id:
         buttons.append(RevokeButton(link_id))
@@ -299,17 +353,18 @@ def link_panel(
     *,
     note: str | None = None,
     truncated_from: int | None = None,
+    basket_token: str | None = None,
 ) -> discord.ui.LayoutView:
     """A link's panel. Without a link (revoked), only the note and the basket part remain."""
     if link is None:
-        return layout(note, *basket_parts(state, user_id, None))
+        return layout(note, *basket_parts(state, user_id, None, basket_token))
     record = link.record
     return layout(
         note,
         link_summary(record, truncated_from=truncated_from),
         *previews(record),
         link_row(link),
-        *basket_parts(state, user_id, record.link_id),
+        *basket_parts(state, user_id, record.link_id, basket_token),
     )
 
 
@@ -341,19 +396,29 @@ def walk(components: Iterable[Any]) -> Iterator[Any]:
             yield accessory
 
 
+def message_urls(interaction: discord.Interaction) -> dict[int, str]:
+    """Our link buttons on the clicked message, by component id."""
+    components = interaction.message.components if interaction.message else []
+    return {c.id: c.url for c in walk(components) if getattr(c, "id", None) in (ID_FILES, ID_ZIP, ID_BASKET)}
+
+
+def shown_basket_token(interaction: discord.Interaction) -> str | None:
+    url = message_urls(interaction).get(ID_BASKET)
+    return url.split("#", 1)[1].removesuffix(".zip") if url and "#" in url else None
+
+
 def panel_link(interaction: discord.Interaction) -> PanelLink | None:
     """The live link of the panel a button sits on: the record via the Revoke button's link id,
     the URLs from the link buttons."""
     if interaction.message is None:
         return None
-    link_id, urls = None, {}
+    link_id = None
     for c in walk(interaction.message.components):
         if m := RevokeButton.__discord_ui_compiled_template__.fullmatch(getattr(c, "custom_id", None) or ""):
             link_id = m["link_id"]
-        if getattr(c, "id", None) in (ID_FILES, ID_ZIP) and getattr(c, "url", None):
-            urls[c.id] = c.url
+    urls = message_urls(interaction)
     record = app(interaction).store.link_by_id(link_id, interaction.user.id) if link_id else None
-    if record is None or len(urls) != 2:
+    if record is None or ID_FILES not in urls or ID_ZIP not in urls:
         return None
     return PanelLink(record, urls[ID_FILES], urls[ID_ZIP])
 
@@ -398,7 +463,10 @@ class RevokeButton(
         state = app(interaction)
         revoked = state.store.revoke(self.link_id, interaction.user.id)
         note = REVOKED if revoked else LINK_GONE
-        await update(interaction, link_panel(state, interaction.user.id, None, note=note))
+        reply = link_panel(
+            state, interaction.user.id, None, note=note, basket_token=shown_basket_token(interaction)
+        )
+        await update(interaction, reply)
 
 
 class AddLinkToBasketButton(
