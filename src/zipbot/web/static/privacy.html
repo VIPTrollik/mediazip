@@ -4,46 +4,55 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1e1f22" media="(prefers-color-scheme: dark)">
 <title>Privacy policy</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <main>
-  <h1>Privacy policy</h1>
-  <p class="muted">Discord media downloader · last updated 2 November 2026</p>
+  <article class="prose">
+    <header class="page-header">
+      <h1>Privacy policy</h1>
+      <p class="muted">Discord media downloader · last updated 2 November 2026</p>
+    </header>
 
-  <h2>What this app does</h2>
-  <p>When you use <b>Download attachments</b>, <b>Add to ZIP basket</b>, <code>/basket</code>, or send messages to the bot in a DM,
-    the app reads the attachments (files of any type) and image/video embeds of those messages and creates a short-lived download link for you.</p>
+    <h2>What this app does</h2>
+    <p>When you use <b>Download attachments</b>, <b>Add to ZIP basket</b>, <code>/basket</code>, or send messages to the bot in a DM,
+      the app reads the attachments (files of any type) and image/video embeds of those messages and creates a short-lived download link for you.</p>
 
-  <h2>What is stored, and for how long</h2>
-  <ul>
-    <li><b>In memory only, never on disk:</b> for each link — your Discord user ID, the Discord CDN addresses, file names,
-      sizes and dimensions of the files, and a one-way hash of the link's secret. Links expire after at most 60 minutes
-      (sooner if Discord's file links expire first) and can be revoked at any time with <b>Revoke link</b>.</li>
-    <li><b>Basket:</b> the same kind of data for the messages you add, kept for 60 minutes after your last change,
-      or until you clear it.</li>
-    <li>Everything is deleted when it expires or when the service restarts.</li>
-  </ul>
+    <h2>What is stored, and for how long</h2>
+    <ul>
+      <li><b>In memory only, never on disk:</b> for each link — your Discord user ID, the Discord CDN addresses, file names,
+        sizes and dimensions of the files, and a one-way hash of the link's secret. Links expire after at most 60 minutes
+        (sooner if Discord's file links expire first) and can be revoked at any time with <b>Revoke link</b>.</li>
+      <li><b>Basket:</b> the same kind of data for the messages you add, kept for 60 minutes after your last change,
+        or until you clear it.</li>
+      <li>Everything is deleted when it expires or when the service restarts.</li>
+    </ul>
 
-  <h2>What is not stored</h2>
-  <ul>
-    <li>The files themselves. Your browser downloads them directly from Discord; they never pass through this server.</li>
-    <li>Message text. The app does not keep the content of your messages.</li>
-    <li>Logs of links, file names, or addresses. Server logs contain only counts and error types.</li>
-  </ul>
+    <h2>What is not stored</h2>
+    <ul>
+      <li>The files themselves. Your browser downloads them directly from Discord; they never pass through this server.</li>
+      <li>Message text. The app does not keep the content of your messages.</li>
+      <li>Logs of links, file names, or addresses. Server logs contain only counts and error types.</li>
+    </ul>
 
-  <h2>Sharing</h2>
-  <p>No data is sold or shared with third parties. Anyone who has a download link can use it until it expires, so only
-    share it if you want others to download the files.</p>
-  <p>Revoking a link (or its expiry) stops it from being opened again. Whoever already opened it has received Discord's
-    own file addresses, which Discord keeps valid for about a day; that is the same as the file links Discord itself
-    shows in the chat.</p>
+    <h2>Sharing</h2>
+    <p>No data is sold or shared with third parties. Anyone who has a download link can use it until it expires, so only
+      share it if you want others to download the files.</p>
+    <p>Revoking a link (or its expiry) stops it from being opened again. Whoever already opened it has received Discord's
+      own file addresses, which Discord keeps valid for about a day; that is the same as the file links Discord itself
+      shows in the chat.</p>
 
-  <h2>Contact</h2>
-  <p>Questions or deletion requests: contact the operator of this instance through the bot's Discord application page.
-    Because nothing is kept for longer than an hour, there is usually nothing left to delete.</p>
-  <p><a href="/">Home</a> · <a href="/terms">Terms</a></p>
+    <h2>Contact</h2>
+    <p>Questions or deletion requests: contact the operator of this instance through the bot's Discord application page.
+      Because nothing is kept for longer than an hour, there is usually nothing left to delete.</p>
+  </article>
+
+  <footer class="site-footer">
+    <nav aria-label="Site"><a href="/">Home</a> <a href="/terms">Terms</a></nav>
+  </footer>
 </main>
 </body>
 </html>
