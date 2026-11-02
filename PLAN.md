@@ -40,26 +40,35 @@ From the Discord docs:
 
 ## 3. UX
 
-### A. Context menu — "Download media"
-Right-click / long-press message → Apps → **Download media**.
-Ephemeral reply:
-> 📦 **12 files · 48.3 MB** · link valid 60 min
-> `[⬇ Download ZIP]` `[📱 Save to phone]` `[👁 Open page]` (link buttons) `[➕ Add to basket]` `[🗑 Revoke link]`
-
-**Direct actions (decided at G0):** the reply has one link button per action. The action rides in the fragment (`/d#<token>.zip`, `/d#<token>.files`, plain `/d#<token>` = page only). The page starts that action automatically on load, so one tap in Discord starts the download. If the browser blocks a download that wasn't started by a user gesture (to be verified in Phase 3 on Android Chrome + Custom Tab), the page falls back to a single big "Start" button. Every reply that carries a link (A, A2, B, `/basket link`) uses the same button row.
-
-No attachments → ephemeral "This message has no attachments to download." (v0.1: any file type, and the command is now **Download attachments**.)
+### A. Context menu — "Download attachments" (v0.1: one live panel, "Design A" at G-UX)
+Right-click / long-press message → Apps → **Download attachments**.
+Ephemeral reply: **one Components V2 panel** (`views.py`, a `LayoutView` with one Container):
+```
+📦 12 files · 48.3 MB · link expires in 59 min   (+ "only the first N of M" note)
+[thumb][thumb][thumb]…                            MediaGallery, ≤ 10 images/videos (+N more)
+-# 📎 report.pdf · notes.txt · +3 more            other files; names escaped, one line
+[⬇️ Download all ↗] [🗜️ Download ZIP ↗]           #token.files / #token.zip
+──────────────────────────────────────
+🧺 Basket: 7 files from 3 messages                (only with a non-empty basket)
+[➕ Add to basket] [🧺 Basket ZIP ↗] [🧹 Clear basket] [🗑️ Revoke]
+```
+- **Direct actions (decided at G0):** the action rides in the fragment (`/d#<token>.files`, `/d#<token>.zip`), and the page starts it on load. "Open page" was dropped in v0.1: Download all lands on the page anyway.
+- **One live panel per user:** a new panel deletes the user's previous one through the interaction token that last touched it (if < 14 min old; tokens live 15). Buttons edit the panel they sit on and refresh its token. Only the live panel takes a click's token, and replies are ordered by a ticket taken before their send. In memory only: after a restart old panels stay until dismissed.
+- **Basket ZIP** is a pre-minted basket link; each user has one live basket link. A new panel re-mints it (only token hashes are stored), and an in-place edit keeps it while the basket is unchanged.
+- **Revoke** says what it does: the link can't be opened again; pages already open keep working until Discord's file links expire.
+- Notices (no attachments, errors, cooldowns) are plain ephemeral text and leave the live panel alone. No attachments → "This message has no attachments to download."
 
 ### A2. Context menu — "Add to ZIP basket"
-Ephemeral reply: "🧺 Basket: 3 messages · 21 files" `[⬇ Get link]` `[Clear]`.
+The basket's own panel replaces the previous one: "✓ Added N files to your basket." (or duplicate/full), "🧺 Basket: N files from M messages · size · expiry", thumbnails, `[Download all ↗]` `[Basket ZIP ↗]` `[Clear basket]`.
 
 ### B. DM the bot
 - **Forward** a message to the bot's DM, or **upload** files directly to it.
-- Messages arriving within `DM_DEBOUNCE_SEC` (default 8 s) form one burst. The bot sends **one** reply with a link for exactly that burst (one folder per message); **Add to basket** on it combines bursts (changed at G6).
-- Non-media message → short help text.
+- Messages arriving within `DM_DEBOUNCE_SEC` (default 8 s) form one burst. The bot sends **one** reply (the same panel, as an ordinary message that is never deleted) with a link for exactly that burst (one folder per message); **Add to basket** on it combines bursts (changed at G6).
+- Bounded: a burst holds at most `MAX_FILES_PER_LINK` items (sent at once when full) and lives at most 3 × debounce (≤ 30 s); a user starts at most 5 bursts a minute (one notice beyond that).
+- Non-media message → short help text, at most once per 5 minutes per user.
 
 ### /basket
-`/basket show | link | clear` — available in all contexts.
+`/basket show | link | clear` — available in all contexts. `show` and `link` both answer with the basket panel.
 
 ### Download page (`https://<host>/d#<token>`)
 - Thumbnail grid (images via media proxy resize params; videos show a placeholder + duration if known).
