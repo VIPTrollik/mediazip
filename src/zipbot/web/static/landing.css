@@ -43,10 +43,6 @@
 .landing__note { margin-top: var(--space-5); }
 .landing__note a { color: var(--link); }
 
-/* ---- Footer outside <main> (its own contentinfo landmark), in main's content column ---- */
-body > .site-footer {
-  margin: 0 max(var(--space-4), (100% - var(--content)) / 2 + var(--space-4)) var(--space-7);
-}
 main.landing { padding-bottom: var(--space-6); } /* keeps the page to one 1280×800 screen */
 
 /* ---- Illustration (inline SVG in index.html) ------------------------------------ */
