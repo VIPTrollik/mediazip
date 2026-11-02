@@ -52,10 +52,12 @@ cp .env.example .env
 All settings and defaults are listed in [.env.example](.env.example). The app refuses to
 start if a value is missing or invalid, and says which one (never printing its value).
 
-`MEDIA_TYPES` (default `all`) decides which attachments go into a link: `all` takes every
-file (PDFs, archives, files without an extension...); `image,video` (any of `image`, `video`,
-`audio`) limits links to those. Embeds (link previews, GIFs) only ever count as images or
-videos.
+`MEDIA_TYPES` (default `image,video`) decides which attachments go into a link: any of
+`image`, `video`, `audio`, or `all` for every file (PDFs, archives, files without an
+extension...). `audio` and `all` are opt-ins. With `all`, expect failures: Discord's CDN
+sends no CORS headers for documents and similar files (images and videos get
+`Access-Control-Allow-Origin: *`), so the browser can't fetch them and the download page
+reports them as failed. Embeds (link previews, GIFs) only ever count as images or videos.
 
 `TRUSTED_PROXIES` (default `127.0.0.1/32`) lists the peers whose `X-Forwarded-For` header
 is believed, for per-client rate limiting. With nginx on the host the container sees the

@@ -159,7 +159,7 @@ Bearer links are accepted; the following keeps them safe:
 | `BASKET_TTL_MIN` | `60` | Sliding |
 | `BASKET_MAX_MESSAGES` | `10` | |
 | `MAX_FILES_PER_LINK` | `100` | |
-| `MEDIA_TYPES` | `all` (v0.1) | or e.g. `image,video` |
+| `MEDIA_TYPES` | `image,video` | `audio`, `all` opt-in; the CDN sends no CORS for documents |
 | `DM_DEBOUNCE_SEC` | `8` | |
 | `MAX_ACTIVE_LINKS_PER_USER` | `20` | |
 | `RESOLVE_RATE_PER_MIN` | `30` | per IP |

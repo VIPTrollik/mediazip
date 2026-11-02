@@ -56,6 +56,11 @@ def attachments(n: int | None = None) -> list[discord.Attachment]:
     return [discord.Attachment(data=a, state=STATE) for a in data[:n]]
 
 
+def any_files() -> list[discord.Attachment]:
+    """report.pdf, notes.txt, photos.zip, Makefile, backup.tar.gz, photo.png."""
+    return [discord.Attachment(data=a, state=STATE) for a in fixture("message_any_files.json")["attachments"]]
+
+
 def dm(channel: Channel, msg_id: int, *, files: list[Any] | None = None, forward: list[Any] | None = None,
        user: int = 7, bot: bool = False, guild: Any = None) -> Any:  # fmt: skip
     snapshots = [SimpleNamespace(attachments=forward, embeds=[])] if forward else []
@@ -110,6 +115,22 @@ async def test_burst_of_forwards_gives_one_link(cog: DmCog) -> None:
     assert view.is_finished()  # detached: buttons are handled by DynamicItems
     record = link_record(cog, ch.sent[0])
     assert [n.split("/")[0] for n in record.names] == ["01", "01", "02", "02", "03", "03"]
+
+
+@pytest.mark.parametrize(("media_types", "files"), [({"image", "video"}, 1), ({"all"}, 6)])
+async def test_dm_takes_media_types(cog: DmCog, media_types: set[str], files: int) -> None:
+    cog.bot.settings = cog.bot.settings.model_copy(update={"media_types": frozenset(media_types)})
+    ch = Channel()
+    await cog.on_message(dm(ch, 1, files=any_files()))
+    await settle(cog)
+    assert len(link_record(cog, ch.sent[0]).items) == files
+
+
+async def test_dm_without_images_or_videos_gets_help(cog: DmCog) -> None:
+    ch = Channel()
+    await cog.on_message(dm(ch, 1, files=any_files()[:5]))  # documents only: not taken by default
+    await settle(cog)
+    assert ch.sent == [(HELP, None)]
 
 
 async def test_each_burst_gets_its_own_link(cog: DmCog) -> None:

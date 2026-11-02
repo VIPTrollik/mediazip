@@ -60,7 +60,7 @@ def test_hostile_filename_still_matches_schema(store: Store) -> None:
 
 def test_any_file_type_body(store: Store) -> None:
     items = [
-        *extract(fixture("message_any_files.json"), source_index=0),
+        *extract(fixture("message_any_files.json"), source_index=0, kinds=None),  # MEDIA_TYPES=all
         item(".env", ctype=None, width=None, height=None, source=1),  # dotfile, no content_type
     ]
     _, record = store.create_link(1, items)

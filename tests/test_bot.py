@@ -204,15 +204,15 @@ def test_download_reply_respects_media_types(state: Any) -> None:
     assert texts(view)[0].startswith("📦 **1 file** · ")
 
 
-def test_download_reply_takes_any_file_by_default(state: Any) -> None:
+def test_download_reply_takes_any_file_with_all(state: Any) -> None:
+    state.settings = state.settings.model_copy(update={"media_types": frozenset({"all"})})
     view = panel(handlers.download_reply(state, 7, fixture("message_any_files.json"), "k"))
     assert texts(view)[0].startswith("📦 **6 files** · ")
     assert len(gallery(view)) == 1  # photo.png
     assert "-# 📎 report.pdf · notes.txt · photos.zip · Makefile · backup.tar.gz" in texts(view)
 
 
-def test_download_reply_media_only_opt_out(state: Any) -> None:
-    state.settings = state.settings.model_copy(update={"media_types": frozenset({"image", "video"})})
+def test_download_reply_images_and_videos_by_default(state: Any) -> None:
     view = panel(handlers.download_reply(state, 7, fixture("message_any_files.json"), "k"))
     assert texts(view)[0].startswith("📦 **1 file** · ")  # just photo.png
     no_media = {"attachments": fixture("message_any_files.json")["attachments"][:5]}
