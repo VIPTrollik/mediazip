@@ -163,7 +163,7 @@ Bearer links are accepted; the following keeps them safe:
 | `DM_DEBOUNCE_SEC` | `8` | |
 | `MAX_ACTIVE_LINKS_PER_USER` | `20` | |
 | `RESOLVE_RATE_PER_MIN` | `30` | per IP |
-| `TRUSTED_PROXIES` | `127.0.0.1,172.16.0.0/12` | nginx / docker bridge |
+| `TRUSTED_PROXIES` | `127.0.0.1/32` | nginx peers; compose sets `127.0.0.1,172.30.88.1` (its `zipbot` network gateway); other Docker setups must set their bridge gateway or all clients share one rate-limit bucket |
 | `LOG_LEVEL` | `INFO` | |
 
 Loaded with `pydantic-settings`; app fails fast on missing/invalid values.
