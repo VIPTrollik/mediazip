@@ -64,11 +64,11 @@ async def test_commands_registered_for_every_context(settings: Settings) -> None
     for ext in EXTENSIONS:
         await bot.load_extension(ext)
     payloads = {c.name: c.to_dict(bot.tree) for c in bot.tree.get_commands()}
-    assert set(payloads) == {"Download media", "Add to ZIP basket", "basket"}
+    assert set(payloads) == {"Download attachments", "Add to ZIP basket", "basket"}
     for p in payloads.values():
         assert sorted(p["integration_types"]) == [0, 1]
         assert sorted(p["contexts"]) == [0, 1, 2]
-    assert payloads["Download media"]["type"] == 3
+    assert payloads["Download attachments"]["type"] == 3
     assert {o["name"] for o in payloads["basket"]["options"]} == {"show", "link", "clear"}
     for ext in EXTENSIONS:
         await bot.unload_extension(ext)
@@ -95,15 +95,28 @@ def test_download_reply(state: Any) -> None:
     assert ids == [f"zb:basket:{record.link_id}", f"zb:revoke:{record.link_id}"]
 
 
-def test_download_reply_no_media(state: Any) -> None:
+def test_download_reply_no_attachments(state: Any) -> None:
     payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
-    assert handlers.download_reply(state, 7, payload, "k") == (handlers.NO_MEDIA, None)
+    assert handlers.download_reply(state, 7, payload, "k") == (handlers.NO_ATTACHMENTS, None)
 
 
 def test_download_reply_respects_media_types(state: Any) -> None:
     state.settings = state.settings.model_copy(update={"media_types": frozenset({"video"})})
     content, _ = handlers.download_reply(state, 7, media_payload(), "k")
     assert content.startswith("📦 **1 file** · ")
+
+
+def test_download_reply_takes_any_file_by_default(state: Any) -> None:
+    content, _ = handlers.download_reply(state, 7, fixture("message_any_files.json"), "k")
+    assert content.startswith("📦 **6 files** · ")
+
+
+def test_download_reply_media_only_opt_out(state: Any) -> None:
+    state.settings = state.settings.model_copy(update={"media_types": frozenset({"image", "video"})})
+    content, _ = handlers.download_reply(state, 7, fixture("message_any_files.json"), "k")
+    assert content.startswith("📦 **1 file** · ")  # just photo.png
+    no_media = {"attachments": fixture("message_any_files.json")["attachments"][:5]}
+    assert handlers.download_reply(state, 7, no_media, "k") == (handlers.NO_ATTACHMENTS, None)
 
 
 def test_download_reply_truncates(state: Any) -> None:
@@ -145,10 +158,10 @@ def test_basket_handlers(state: Any) -> None:
     assert "basket is empty" in handlers.basket_link(state, 7)[0]
 
 
-def test_add_no_media_to_basket(state: Any) -> None:
+def test_add_no_attachments_to_basket(state: Any) -> None:
     payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
     content, view = handlers.add_to_basket_reply(state, 7, payload, "k")
-    assert content == "That message has no images or videos.\n🧺 Your basket is empty."
+    assert content == "That message has no attachments to download.\n🧺 Your basket is empty."
     assert view is None
 
 
@@ -302,17 +315,27 @@ async def test_error_handler(settings: Settings, state: Any, done: bool) -> None
 # --- command sync --------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("changed", [False, True])
-async def test_sync_only_when_commands_changed(settings: Settings, changed: bool) -> None:
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        (0, "description", "old text"),
+        (1, "name", "Download media"),  # v0.0.0 name: Discord keeps it until we re-sync
+    ],
+)
+async def test_sync_only_when_commands_changed(
+    settings: Settings, change: tuple[int, str, str] | None
+) -> None:
     bot = ZipBot(settings, Store.from_settings(settings))
     bot._connection.application_id = 1  # normally set at login
     for ext in EXTENSIONS:
         await bot.load_extension(ext)
     remote: list[Any] = cast(Any, fixture("global_commands.json"))  # Discord's view of the current commands
-    if changed:
-        remote[0]["description"] = "old text"
+    if change:
+        index, key, old = change
+        remote[index][key] = old
     bot.http.get_global_commands = AsyncMock(return_value=remote)  # type: ignore[method-assign]
     bot.tree.sync = AsyncMock(return_value=[])  # type: ignore[method-assign]
     await bot.sync_commands()
-    assert bot.tree.sync.await_count == (1 if changed else 0)
+    assert bot.tree.sync.await_count == (1 if change else 0)
     await bot.close()

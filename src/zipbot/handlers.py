@@ -12,7 +12,7 @@ from zipbot.media import MediaItem, extract, payload_from_message
 from zipbot.store import LinkError
 from zipbot.views import AppState, basket_link_reply, basket_reply, download_view, link_summary
 
-NO_MEDIA = "This message has no images or videos."
+NO_ATTACHMENTS = "This message has no attachments to download."
 
 Reply = tuple[str, discord.ui.View | None]
 
@@ -47,7 +47,7 @@ def link_reply(state: AppState, user_id: int, items: Sequence[MediaItem], key: s
 def download_reply(state: AppState, user_id: int, payload: Mapping[str, Any], key: str) -> Reply:
     items = extract(payload, kinds=_kinds(state))
     if not items:
-        return NO_MEDIA, None
+        return NO_ATTACHMENTS, None
     return link_reply(state, user_id, items, key)
 
 

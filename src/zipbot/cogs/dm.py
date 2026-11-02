@@ -1,4 +1,4 @@
-"""Trigger B: forward or upload media to the bot's DM (PLAN.md §3).
+"""Trigger B: forward or upload files to the bot's DM (PLAN.md §3).
 
 Messages arriving within DM_DEBOUNCE_SEC form one burst; the bot then replies once with a
 link for exactly that burst (one ZIP folder per message). "Add to basket" on the reply puts
@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 HELP = (
-    "Forward me messages with images or videos (or upload files here) and I'll reply with one "
-    "download link for all of them. You can also use **Apps → Download media** on any message."
+    "Forward me messages with attachments (or upload files here) and I'll reply with one "
+    "download link for all of them. You can also use **Apps → Download attachments** on any message."
 )
 
 

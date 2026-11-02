@@ -13,13 +13,13 @@
   <p class="muted">Discord media downloader · last updated 2 November 2026</p>
 
   <h2>What this app does</h2>
-  <p>When you use <b>Download media</b>, <b>Add to ZIP basket</b>, <code>/basket</code>, or send messages to the bot in a DM,
-    the app reads the attachments and image/video embeds of those messages and creates a short-lived download link for you.</p>
+  <p>When you use <b>Download attachments</b>, <b>Add to ZIP basket</b>, <code>/basket</code>, or send messages to the bot in a DM,
+    the app reads the attachments (files of any type) and image/video embeds of those messages and creates a short-lived download link for you.</p>
 
   <h2>What is stored, and for how long</h2>
   <ul>
     <li><b>In memory only, never on disk:</b> for each link — your Discord user ID, the Discord CDN addresses, file names,
-      sizes and dimensions of the media, and a one-way hash of the link's secret. Links expire after at most 60 minutes
+      sizes and dimensions of the files, and a one-way hash of the link's secret. Links expire after at most 60 minutes
       (sooner if Discord's file links expire first) and can be revoked at any time with <b>Revoke link</b>.</li>
     <li><b>Basket:</b> the same kind of data for the messages you add, kept for 60 minutes after your last change,
       or until you clear it.</li>

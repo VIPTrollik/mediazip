@@ -48,7 +48,7 @@ Ephemeral reply:
 
 **Direct actions (decided at G0):** the reply has one link button per action. The action rides in the fragment (`/d#<token>.zip`, `/d#<token>.files`, plain `/d#<token>` = page only). The page starts that action automatically on load, so one tap in Discord starts the download. If the browser blocks a download that wasn't started by a user gesture (to be verified in Phase 3 on Android Chrome + Custom Tab), the page falls back to a single big "Start" button. Every reply that carries a link (A, A2, B, `/basket link`) uses the same button row.
 
-No media → ephemeral "This message has no images or videos."
+No attachments → ephemeral "This message has no attachments to download." (v0.1: any file type, and the command is now **Download attachments**.)
 
 ### A2. Context menu — "Add to ZIP basket"
 Ephemeral reply: "🧺 Basket: 3 messages · 21 files" `[⬇ Get link]` `[Clear]`.
@@ -114,7 +114,7 @@ Filter by `MEDIA_TYPES` (`content_type` prefix, fallback to extension). Dedupe b
 |---|---|
 | `GET /` | Landing: what it is, install links, privacy note |
 | `GET /d` | Static download page (identical for every token) |
-| `POST /api/resolve` `{"token": "..."}` | `200 {expires_at, items:[{url, thumb, name, kind, mime, size, width, height, duration}]}` (**frozen at G2**: `tests/contract/resolve.schema.json`) or a generic `404` (no distinction between invalid, expired and revoked). File names and folders are computed **server-side** (`naming.py`). The ZIP name is set by the page from the viewer's local time |
+| `POST /api/resolve` `{"token": "..."}` | `200 {expires_at, items:[{url, thumb, name, kind, mime, size, width, height, duration}]}` (**v1 frozen at G2; v2 in v0.1 adds `kind: "file"`**: `tests/contract/resolve.schema.json`) or a generic `404` (no distinction between invalid, expired and revoked). File names and folders are computed **server-side** (`naming.py`). The ZIP name is set by the page from the viewer's local time |
 | `GET /static/*` | JS/CSS, vendored `client-zip` |
 | `GET /privacy`, `GET /terms` | Required for a public app / verification |
 | `GET /healthz` | Liveness for Docker healthcheck |
@@ -150,7 +150,7 @@ Bearer links are accepted; the following keeps them safe:
 | `BASKET_TTL_MIN` | `60` | Sliding |
 | `BASKET_MAX_MESSAGES` | `10` | |
 | `MAX_FILES_PER_LINK` | `100` | |
-| `MEDIA_TYPES` | `image,video` | or `all` |
+| `MEDIA_TYPES` | `all` (v0.1) | or e.g. `image,video` |
 | `DM_DEBOUNCE_SEC` | `8` | |
 | `MAX_ACTIVE_LINKS_PER_USER` | `20` | |
 | `RESOLVE_RATE_PER_MIN` | `30` | per IP |

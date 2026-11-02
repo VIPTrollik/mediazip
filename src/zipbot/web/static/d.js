@@ -125,7 +125,7 @@ function renderSummary() {
   if (expired() && !state.busy) {
     clearInterval(state.timer);
     setBusy(false);
-    showError("This link has expired", "Run “Download media” in Discord again to get a new link.");
+    showError("This link has expired", "Run “Download attachments” in Discord again to get a new link.");
   }
 }
 
@@ -328,7 +328,7 @@ async function main() {
     return;
   }
   if (res.status === 404) {
-    showError("This link has expired or is invalid", "Run “Download media” in Discord again to get a new link.");
+    showError("This link has expired or is invalid", "Run “Download attachments” in Discord again to get a new link.");
     return;
   }
   if (res.status === 429) {

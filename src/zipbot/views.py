@@ -202,7 +202,7 @@ BASKET_RESULT_TEXT = {
     AddResult.DUPLICATE: "That message is already in your basket.",
     AddResult.FULL_MESSAGES: "Your basket is full (message limit). Get the link or clear it first.",
     AddResult.FULL_FILES: "That would exceed the file limit for one link. Get the link or clear the basket.",
-    AddResult.EMPTY: "That message has no images or videos.",
+    AddResult.EMPTY: "That message has no attachments to download.",
 }
 
 

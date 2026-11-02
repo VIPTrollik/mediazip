@@ -1,9 +1,9 @@
 # Discord media downloader
 
-Save every image and video of a Discord message (or a few messages) at once — as a ZIP or
-straight to your phone — from inside the Discord app.
+Save every attachment of a Discord message (or a few messages) at once — images, videos, and
+any other file — as a ZIP or straight to your phone — from inside the Discord app.
 
-- **Right-click / long-press a message → Apps → Download media.** The reply (only you see it)
+- **Right-click / long-press a message → Apps → Download attachments.** The reply (only you see it)
   has one-tap buttons: **📱 Save to phone**, **⬇️ Download ZIP**, **👁️ Open page**.
 - **Add to ZIP basket** on several messages, then **Get download link** (or `/basket link`):
   one ZIP with a folder per message.
@@ -51,6 +51,11 @@ cp .env.example .env
 All settings and defaults are listed in [.env.example](.env.example). The app refuses to
 start if a value is missing or invalid, and says which one (never printing its value).
 
+`MEDIA_TYPES` (default `all`) decides which attachments go into a link: `all` takes every
+file (PDFs, archives, files without an extension...); `image,video` (any of `image`, `video`,
+`audio`) limits links to those. Embeds (link previews, GIFs) only ever count as images or
+videos.
+
 `TRUSTED_PROXIES` (default `127.0.0.1,172.16.0.0/12`) lists the peers whose
 `X-Forwarded-For` header is believed, for per-client rate limiting. With nginx on the host
 the container sees the Docker bridge gateway as the peer; check it with
@@ -70,7 +75,9 @@ Then point your reverse proxy at `http://127.0.0.1:8080` and check
 Discord within a minute; restart the Discord app if they don't.
 
 Update: `git pull && docker compose up -d --build`. Links and baskets are lost on restart
-(they are short-lived by design).
+(they are short-lived by design). When a command changed (e.g. "Download media" became
+"Download attachments" in v0.1), the bot re-syncs on start; restart the Discord app if the
+old name still shows.
 
 ### If the token leaks
 
@@ -98,7 +105,7 @@ Handy for manual testing:
 
 Layout: `src/zipbot/` (`media.py` extraction, `naming.py` file names, `store.py` links and
 baskets, `handlers.py`/`views.py`/`cogs/` the Discord side, `web/` the page and API),
-`tests/` (fixtures are scrubbed real payloads; `tests/contract/` holds the frozen API
+`tests/` (fixtures are scrubbed real payloads; `tests/contract/` holds the versioned API
 schema), `tests/spike/` the Phase 0 experiments.
 
 ## License
