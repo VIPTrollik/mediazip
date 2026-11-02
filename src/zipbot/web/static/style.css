@@ -176,6 +176,10 @@ img, svg { max-width: 100%; }
 .site-footer a:hover { color: var(--fg); }
 .site-footer nav { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-4); }
 .site-footer > * + * { margin-top: var(--space-2); }
+/* outside <main> (its own contentinfo landmark), aligned with main's content column */
+body > .site-footer {
+  margin: 0 max(var(--space-4), (100% - var(--content)) / 2 + var(--space-4)) var(--space-7);
+}
 
 /* ---- 4. Icon -------------------------------------------------------------------- */
 .icon { width: var(--icon-md); height: var(--icon-md); flex: none; display: inline-block; vertical-align: middle; }
