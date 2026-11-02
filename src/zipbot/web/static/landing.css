@@ -19,7 +19,6 @@
 .hero .actions { margin-top: var(--space-5); }
 .hero__hint { font-size: var(--text-sm); color: var(--muted); max-width: 52ch; }
 .hero__hint b { color: var(--fg); font-weight: 600; }
-.hero__text > .hero__disclaimer { margin-top: var(--space-2); font-size: var(--text-xs); color: var(--muted); }
 .hero__art { margin: 0; }
 .hero__art svg { display: block; width: 100%; height: auto; }
 

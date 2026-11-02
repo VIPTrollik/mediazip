@@ -105,7 +105,7 @@ def test_landing_structure_and_keyboard(page: Page, base_url: str) -> None:
     assert page.get_by_text("Apps → Download media").is_visible()
     assert page.get_by_role("navigation", name="Site").is_visible()
     assert page.get_by_role("contentinfo").count() == 1  # footer is a sibling of <main>, not inside it
-    assert page.get_by_text("Not affiliated with or endorsed by Discord.").count() == 2  # hero + footer
+    assert "affiliated" not in page.locator("body").inner_text()  # the disclaimer lives in the terms
     # The first Tab stop is the primary call to action, with a visible focus ring.
     # WebKit, like Safari's default setting, skips links on Tab, so there it is focused directly.
     browser = page.context.browser
