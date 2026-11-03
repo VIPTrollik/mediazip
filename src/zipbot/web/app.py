@@ -20,6 +20,9 @@ from zipbot.contract import resolve_body
 from zipbot.store import Store
 
 STATIC = Path(__file__).parent / "static"
+# The source code link on the landing, privacy and terms pages (their `{{REPO_URL}}`).
+REPO_URL = "https://github.com/VIPTrollik/mediazip"
+FAVICON = STATIC / "brand" / "favicon.ico"
 CDN_HOSTS = (
     "https://cdn.discordapp.com",
     "https://media.discordapp.net",
@@ -217,6 +220,15 @@ def analytics_tags(measurement_id: str | None) -> str:
     )
 
 
+def render_page(source: str, measurement_id: str | None, base_url: str) -> str:
+    """Fill a page's placeholders: the analytics blocks, `{{REPO_URL}}` and `{{BASE_URL}}` (the
+    absolute URL that link previews need for og:image)."""
+    source = render_analytics(source, measurement_id)
+    for name, value in (("REPO_URL", REPO_URL), ("BASE_URL", base_url)):
+        source = source.replace(f"{{{{{name}}}}}", html.escape(value))
+    return source
+
+
 def render_analytics(source: str, measurement_id: str | None) -> str:
     """Fill `<!--analytics-->` and keep the `<!--if-analytics-->…<!--/if-analytics-->` or the
     `<!--if-no-analytics-->…<!--/if-no-analytics-->` blocks (the privacy page's disclosure)."""
@@ -227,13 +239,17 @@ def render_analytics(source: str, measurement_id: str | None) -> str:
     return source.replace(ANALYTICS_PLACEHOLDER, analytics_tags(measurement_id))
 
 
-def _analytics_page(name: str, measurement_id: str | None) -> Handler:
+def _analytics_page(name: str, settings: Settings) -> Handler:
     """A page that may carry Google Analytics, rendered once at startup. Served without
     ETag/Last-Modified; the middleware's Cache-Control: no-cache applies."""
+    measurement_id = settings.ga_measurement_id
     source = (STATIC / name).read_text(encoding="utf-8")
     if ANALYTICS_PLACEHOLDER not in source:
         raise RuntimeError(f"{name} has no {ANALYTICS_PLACEHOLDER} placeholder")
-    body = render_analytics(source, measurement_id).encode()
+    rendered = render_page(source, measurement_id, settings.public_base_url)
+    if leftover := re.search(r"\{\{\w*\}\}", rendered):
+        raise RuntimeError(f"{name} has an unknown placeholder {leftover[0]}")
+    body = rendered.encode()
 
     async def handler(_: web.Request) -> web.Response:
         response = web.Response(body=body, content_type="text/html", charset="utf-8")
@@ -241,6 +257,11 @@ def _analytics_page(name: str, measurement_id: str | None) -> Handler:
         return response
 
     return handler
+
+
+async def favicon(_: web.Request) -> web.FileResponse:
+    """`/favicon.ico`, which browsers and crawlers fetch without reading the pages' icon links."""
+    return web.FileResponse(FAVICON, headers={"Content-Type": "image/x-icon"})
 
 
 async def healthz(_: web.Request) -> web.Response:
@@ -308,9 +329,10 @@ def create_app(
     app[UNAVAILABLE_KEY] = (STATIC / "install-unavailable.html").read_bytes()
     app.router.add_get("/healthz", healthz)
     for path, name in ANALYTICS_PAGES.items():  # never /d: its URL fragment holds the link token
-        app.router.add_get(path, _analytics_page(name, settings.ga_measurement_id))
+        app.router.add_get(path, _analytics_page(name, settings))
     app.router.add_get("/install", install)
     app.router.add_get("/d", _page("d.html"))
+    app.router.add_get("/favicon.ico", favicon)
     app.router.add_post("/api/resolve", resolve)
     app.router.add_static("/static/", STATIC, show_index=False, follow_symlinks=False, append_version=False)
     return app

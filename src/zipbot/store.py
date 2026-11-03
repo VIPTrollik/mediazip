@@ -269,7 +269,7 @@ class Store:
             if current and current.link_id == b.link_id and current.owner_id == user_id:
                 return token, current
         if not mint:
-            raise LinkError("the basket link is shown elsewhere")
+            raise LinkError("your ZIP's link is shown elsewhere")
         if b.link_id:
             old, b.link_id = b.link_id, None  # a re-mint: nobody needs telling
             self.revoke(old, user_id)

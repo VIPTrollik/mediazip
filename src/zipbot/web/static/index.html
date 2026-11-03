@@ -8,6 +8,19 @@
 <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1e1f22" media="(prefers-color-scheme: dark)">
 <title>MediaZip: every image and video, saved or zipped</title>
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MediaZip">
+<meta property="og:title" content="MediaZip: every image and video, saved or zipped">
+<meta property="og:description" content="Save every image and video in a Discord message at once, as separate files or one ZIP.">
+<meta property="og:url" content="{{BASE_URL}}/">
+<meta property="og:image" content="{{BASE_URL}}/static/brand/mediazip-icon-512.png">
+<meta property="og:image:width" content="512">
+<meta property="og:image:height" content="512">
+<meta property="og:image:alt" content="The MediaZip icon: a two-by-two grid whose last tile is a download badge">
+<meta name="twitter:card" content="summary">
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/landing.css">
 <!--analytics-->
@@ -16,7 +29,7 @@
 <main class="landing">
   <section class="hero" aria-labelledby="title">
     <div class="hero__text">
-      <p class="hero__brand">MediaZip</p>
+      <p class="hero__brand"><img class="brand__icon" src="/static/brand/mediazip-icon.svg" alt="" width="40" height="40">MediaZip</p>
       <h1 id="title">Every image and video, saved or zipped.</h1>
       <p class="hero__lead">Choose <b>Download media</b> on a message. MediaZip replies privately: <b>Download all</b>
         for separate files, or <b>Download ZIP</b>. Add more messages with <b>Add to ZIP</b>.</p>
@@ -106,13 +119,16 @@
 
   <div class="card card--flat note landing__note">
     <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-lock"/></svg>
-    <p>Your images and videos go straight from Discord to your device. MediaZip never stores them, keeps no file names in its logs,
-      and download links are short-lived. <a href="/privacy">How your data is handled</a></p>
+    <div class="stack-sm">
+      <p>Your images and videos go straight from Discord to your device. MediaZip never stores them, keeps no file names in its logs,
+        and download links are short-lived. <a href="/privacy">How your data is handled</a></p>
+      <p><a class="repo-link" href="{{REPO_URL}}"><svg class="icon icon--sm" aria-hidden="true"><use href="/static/icons.svg#i-github"/></svg>Open source: read the code on GitHub</a></p>
+    </div>
   </div>
 </main>
 
 <footer class="site-footer">
-  <nav aria-label="Site"><a href="/privacy">Privacy</a> <a href="/terms">Terms</a></nav>
+  <nav aria-label="Site"><a href="/privacy">Privacy</a> <a href="/terms">Terms</a> <a href="{{REPO_URL}}">Source on GitHub</a></nav>
 </footer>
 </body>
 </html>
