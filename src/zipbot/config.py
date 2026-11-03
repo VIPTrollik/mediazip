@@ -30,6 +30,9 @@ class Settings(BaseSettings):
     # serves documents without CORS headers, so the page can't fetch them into the ZIP.
     media_types: Annotated[frozenset[str], NoDecode] = frozenset({"image", "video"})
     dm_debounce_sec: float = Field(8, ge=0, le=60)
+    # The basket as one message in the bot DM, edited in place (falls back to ephemeral panels
+    # for users the bot can't DM).
+    basket_dm: bool = True
     # ≥ 2: a panel holds its own link plus the basket link.
     max_active_links_per_user: int = Field(20, ge=2, le=1000)
     resolve_rate_per_min: int = Field(30, ge=1, le=10_000)

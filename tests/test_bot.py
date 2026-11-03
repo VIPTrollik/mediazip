@@ -17,6 +17,7 @@ from helpers import EX, fixture, item, not_found, resolved_message
 from zipbot import handlers, views
 from zipbot.bot import EXTENSIONS, ZipBot, intents
 from zipbot.config import Settings
+from zipbot.dm_basket import DmBaskets
 from zipbot.store import Store
 from zipbot.views import (
     BASKET_CLEARED,
@@ -46,10 +47,18 @@ TOKEN_IN_URL = re.compile(r"/d#([A-Za-z0-9_-]{43})(\.files|\.zip)?$")
 
 
 @pytest.fixture
+def settings(settings: Settings) -> Settings:
+    # Ephemeral panels only (BASKET_DM off); the DM basket message: test_dm_basket.py.
+    return settings.model_copy(update={"basket_dm": False})
+
+
+@pytest.fixture
 def state(settings: Settings) -> Any:
     store = Store.from_settings(settings)
     store.clock = lambda: EX - 24 * 3600
-    return SimpleNamespace(store=store, settings=settings, panels=Panels(), button_cooldown=UserCooldown())
+    ns = SimpleNamespace(store=store, settings=settings, panels=Panels(), button_cooldown=UserCooldown())
+    ns.dm_baskets = DmBaskets(cast(Any, ns))
+    return ns
 
 
 _message_ids = iter(range(1000, 10**6))

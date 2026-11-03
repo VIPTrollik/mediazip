@@ -10,6 +10,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from zipbot.config import Settings
+from zipbot.dm_basket import DmBaskets
 from zipbot.store import Store
 from zipbot.views import COOLDOWN_TEXT, DYNAMIC_ITEMS, Panels, UserCooldown
 
@@ -65,13 +66,19 @@ class ZipBot(commands.Bot):
         self.store = store
         self.panels = Panels()  # each user's one live reply panel
         self.button_cooldown = UserCooldown()
+        self.dm_baskets = DmBaskets(self)  # each user's basket message in the bot DM
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:
             await self.load_extension(ext)
         self.add_dynamic_items(*DYNAMIC_ITEMS)  # buttons keep working after a restart
         self.tree.on_error = self.on_app_command_error
+        self.dm_baskets.start()
         await self.sync_commands()
+
+    async def close(self) -> None:
+        await self.dm_baskets.close()
+        await super().close()
 
     async def sync_commands(self) -> None:
         """Bulk-overwrite global commands only when they changed: syncing on every start gets

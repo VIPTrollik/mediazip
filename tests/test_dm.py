@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 import discord
 import pytest
 
-from helpers import EX, fixture, resolved_message
+from helpers import EX, fixture, forbidden, resolved_message
 from zipbot.__main__ import configure_logging
 from zipbot.bot import ZipBot
 from zipbot.cogs import dm as dm_mod
@@ -198,6 +198,17 @@ async def test_send_failure_is_contained(cog: DmCog) -> None:
     await cog.on_message(dm(ch, 1, files=attachments(1)))
     await settle(cog)
     assert cog.pending == {}
+    assert cog.bot.dm_baskets.usable(7)  # a 500 says nothing about DMs to this user
+
+
+async def test_forbidden_reply_marks_the_dm_unavailable(cog: DmCog, caplog: pytest.LogCaptureFixture) -> None:
+    ch = Channel()
+    ch.send = AsyncMock(side_effect=forbidden(50278))  # type: ignore[method-assign]
+    with caplog.at_level(logging.WARNING, logger="zipbot.cogs.dm"):
+        await cog.on_message(dm(ch, 1, files=attachments(1)))
+        await settle(cog)
+    assert caplog.messages == ["DM reply failed: Forbidden 50278"]
+    assert not cog.bot.dm_baskets.usable(7)  # the basket stays in ephemeral panels
 
 
 async def test_users_are_independent(cog: DmCog) -> None:

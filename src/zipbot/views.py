@@ -16,10 +16,10 @@ import mimetypes
 import re
 import time
 from collections import OrderedDict
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Coroutine, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import PurePosixPath
-from typing import Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import aiohttp
 import discord
@@ -29,6 +29,9 @@ from zipbot.config import Settings
 from zipbot.contract import thumbnail
 from zipbot.media import FILE_KIND, MediaItem, is_allowed_url
 from zipbot.store import AddResult, Basket, LinkError, LinkRecord, Store
+
+if TYPE_CHECKING:
+    from zipbot.dm_basket import DmBaskets
 
 log = logging.getLogger(__name__)
 
@@ -54,10 +57,11 @@ NAMES_MAX = 5  # other files are listed by name, then "+N more"
 NAME_CHARS = 40
 # Ids of a panel's own link buttons. A click re-renders the panel and takes their URLs back
 # from the message, because the store keeps only token hashes. Far above Discord's auto ids.
-ID_FILES, ID_ZIP, ID_BASKET = 901, 902, 903
+ID_FILES, ID_ZIP, ID_BASKET, ID_JUMP = 901, 902, 903, 904
 
 PANEL_TOKEN_SEC = 14 * 60  # an interaction token can edit/delete its message for 15 min
 MAX_PANELS = 1_000  # each entry holds an Interaction (a few KB of payload)
+TOAST_SEC = 8  # a toast deletes itself after this long
 # What a background call to Discord can raise besides an API error (TimeoutError is an OSError).
 NET_ERRORS = (discord.HTTPException, aiohttp.ClientError, TimeoutError, OSError)
 
@@ -70,10 +74,36 @@ LINK_GONE = "This link has already expired or was revoked."
 LINK_EXPIRED = "This link has expired — run the command again."
 BASKET_EMPTY = "🧺 Your basket is empty — use **Apps → Add to ZIP basket** on a message first."
 BASKET_CLEARED = "🧺 Basket cleared."
+BASKET_EXPIRED = "🧺 Basket expired"
 PANEL_GONE = "That panel was just replaced — use your newer one."
+DM_POSTING = "-# Posting your basket in your DMs…"
+DM_FALLBACK = "-# Couldn't post your basket in your DMs; showing it here."
+# The DM basket message's own buttons; also how its old copies are found after a restart.
+DM_MARKER = "zb:dmbasket:"
 
-# A panel, or a short notice that leaves the user's live panel alone.
-Reply = discord.ui.LayoutView | str
+
+@dataclass(frozen=True, slots=True)
+class Toast:
+    """A short ephemeral answer pointing at the DM basket message. It deletes itself and is
+    never the live panel. `note` heads the basket panel shown instead if the DM can't be
+    posted."""
+
+    text: str
+    note: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DmPost:
+    """The DM basket message itself, sent as the answer to a command run in the bot DM."""
+
+    view: discord.ui.LayoutView
+    record: LinkRecord | None
+
+
+# A panel, a short notice that leaves the user's live panel alone, a toast, or (bot DM only)
+# the DM basket message.
+Panel = discord.ui.LayoutView | str
+Reply = Panel | Toast | DmPost
 
 
 class AppState(Protocol):
@@ -81,6 +111,7 @@ class AppState(Protocol):
     settings: Settings
     panels: Panels
     button_cooldown: UserCooldown
+    dm_baskets: DmBaskets
 
 
 def app(interaction: discord.Interaction) -> AppState:
@@ -156,6 +187,12 @@ class Panels:
         live = self._get(user_id)
         return live is None or live.message_id == message_id
 
+    def spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+        """Run `coro` in the background, keeping a reference until it is done."""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
     def _get(self, user_id: int) -> _Panel | None:
         now = self.clock()
         while self._live and next(iter(self._live.values())).at + PANEL_TOKEN_SEC <= now:
@@ -173,9 +210,7 @@ class Panels:
             self._doomed[message_id] = None
             if len(self._doomed) > 2 * self.cap:
                 self._doomed.popitem(last=False)
-        task = asyncio.create_task(self._delete_now(interaction))
-        self._tasks.add(task)
-        task.add_done_callback(self._tasks.discard)
+        self.spawn(self._delete_now(interaction))
 
     @staticmethod
     async def _delete_now(interaction: discord.Interaction) -> None:
@@ -190,28 +225,43 @@ class Panels:
         return len(self._live)
 
 
+def _message_id(response: Any) -> int | None:
+    message_id = getattr(response, "message_id", None)
+    return message_id if isinstance(message_id, int) else None
+
+
 async def show(interaction: discord.Interaction, reply: Reply) -> None:
     """Answer with the user's new live panel (or a notice, which leaves the panel alone)."""
     if isinstance(reply, str):
         await interaction.response.send_message(reply, ephemeral=True)
         return
-    panels = app(interaction).panels
-    ticket = panels.ticket()
-    response = await interaction.response.send_message(view=reply, ephemeral=True)
-    message_id = getattr(response, "message_id", None)
-    panels.opened(
-        interaction.user.id, interaction, message_id if isinstance(message_id, int) else None, ticket
-    )
-
-
-async def update(interaction: discord.Interaction, reply: Reply) -> None:
-    """Answer a button click by editing the panel the button sits on."""
-    message = interaction.message
-    if isinstance(reply, str) or message is None or not message.flags.components_v2:
-        await show(interaction, reply)  # notices; v0.0.0 replies can't become a panel
+    if isinstance(reply, Toast):
+        await _toast(interaction, reply)
+        return
+    if isinstance(reply, DmPost):  # in the bot DM: this answer becomes the DM basket message
+        response = await interaction.response.send_message(view=reply.view)
+        message_id, channel_id = _message_id(response), getattr(interaction, "channel_id", None)
+        if message_id is not None and isinstance(channel_id, int):
+            app(interaction).dm_baskets.adopt(interaction.user.id, channel_id, message_id, reply.record)
         return
     panels = app(interaction).panels
     ticket = panels.ticket()
+    response = await interaction.response.send_message(view=reply, ephemeral=True)
+    panels.opened(interaction.user.id, interaction, _message_id(response), ticket)
+
+
+async def update(
+    interaction: discord.Interaction, reply: Reply, rerender: Callable[[str | None], Reply] | None = None
+) -> None:
+    """Answer a button click by editing the panel the button sits on. `rerender(note)` redraws it
+    once the user's DM basket message, being posted right now, is there (or couldn't be posted:
+    then `note` says so)."""
+    message = interaction.message
+    if not isinstance(reply, discord.ui.LayoutView) or message is None or not message.flags.components_v2:
+        await show(interaction, reply)  # notices, toasts; v0.0.0 replies can't become a panel
+        return
+    state = app(interaction)
+    ticket = state.panels.ticket()
     try:
         await interaction.response.edit_message(view=reply)
     except discord.NotFound:  # the panel was deleted (replaced by a newer one) just now
@@ -219,7 +269,69 @@ async def update(interaction: discord.Interaction, reply: Reply) -> None:
             await interaction.response.send_message(PANEL_GONE, ephemeral=True)
         return
     if message.flags.ephemeral:  # DM replies are ordinary messages and are never deleted
-        panels.clicked(interaction.user.id, interaction, message.id, ticket)
+        state.panels.clicked(interaction.user.id, interaction, message.id, ticket)
+    if rerender is not None and state.dm_baskets.pending(interaction.user.id):
+        state.panels.spawn(_rerender_when_posted(interaction, rerender))
+
+
+async def _rerender_when_posted(
+    interaction: discord.Interaction, rerender: Callable[[str | None], Reply]
+) -> None:
+    dm = app(interaction).dm_baskets
+    jump = await dm.wait_posted(interaction.user.id)
+    if jump is None and dm.usable(interaction.user.id):
+        return  # still posting (or the basket went): leave the panel as it is
+    reply = rerender(None if jump else DM_FALLBACK)
+    if isinstance(reply, discord.ui.LayoutView):
+        with contextlib.suppress(*NET_ERRORS):
+            await interaction.edit_original_response(view=reply)
+
+
+def jump_button(url: str) -> discord.ui.Button[Any]:
+    return discord.ui.Button(label="Open basket", emoji="🧺", url=url, id=ID_JUMP)
+
+
+def toast_view(text: str, jump: str | None) -> discord.ui.LayoutView:
+    view = discord.ui.LayoutView(timeout=None)
+    view.add_item(discord.ui.TextDisplay(text))
+    if jump:
+        view.add_item(row(jump_button(jump)))
+    return detached(view)
+
+
+async def _toast(interaction: discord.Interaction, toast: Toast) -> None:
+    """Send the toast now (the DM message may still be on its way) and finish it later."""
+    dm = app(interaction).dm_baskets
+    jump = dm.jump_url(interaction.user.id)
+    pending = jump is None and dm.pending(interaction.user.id)
+    text = f"{toast.text}\n{DM_POSTING}" if pending else toast.text
+    response = await interaction.response.send_message(view=toast_view(text, jump), ephemeral=True)
+    app(interaction).panels.spawn(_finish_toast(interaction, toast, pending, _message_id(response)))
+
+
+async def _finish_toast(
+    interaction: discord.Interaction, toast: Toast, pending: bool, message_id: int | None
+) -> None:
+    """Add the jump link once the DM message is posted, then delete the toast. If the DM can't
+    be posted, the toast turns into today's basket panel (which then is the live panel)."""
+    state = app(interaction)
+    user_id = interaction.user.id
+    if pending:
+        jump = await state.dm_baskets.wait_posted(user_id)
+        if jump is None and not state.dm_baskets.usable(user_id):
+            ticket = state.panels.ticket()
+            reply = basket_panel(state, user_id, "\n".join(t for t in (toast.note, DM_FALLBACK) if t))
+            view = reply if isinstance(reply, discord.ui.LayoutView) else layout(str(reply))
+            with contextlib.suppress(*NET_ERRORS):
+                await interaction.edit_original_response(view=view)
+                state.panels.opened(user_id, interaction, message_id, ticket)
+            return
+        if jump:
+            with contextlib.suppress(*NET_ERRORS):
+                await interaction.edit_original_response(view=toast_view(toast.text, jump))
+    await asyncio.sleep(TOAST_SEC)
+    with contextlib.suppress(*NET_ERRORS):
+        await interaction.delete_original_response()
 
 
 class UserCooldown:
@@ -278,6 +390,14 @@ def link_summary(record: LinkRecord, *, truncated_from: int | None = None, head:
 
 def basket_line(basket: Basket) -> str:
     return f"🧺 Basket: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}"
+
+
+def basket_head(basket: Basket) -> str:
+    return f"🧺 **Basket: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}**"
+
+
+def jump_url(channel_id: int, message_id: int) -> str:
+    return f"https://discord.com/channels/@me/{channel_id}/{message_id}"
 
 
 def safe_name(name: str) -> str:
@@ -387,20 +507,27 @@ def basket_parts(
     *,
     mint: bool = True,
 ) -> list[discord.ui.Item[Any]]:
-    """Below a link: the basket line and one row: Add to basket, Basket ZIP, Clear, Revoke."""
+    """Below a link: the basket line and one row: Add to basket, Basket ZIP (or Open basket, a
+    jump to the DM basket message), Clear, Revoke."""
     basket = state.store.basket(user_id)
     parts: list[discord.ui.Item[Any]] = [discord.ui.Separator()]
     buttons: list[discord.ui.Item[Any]] = [AddLinkToBasketButton(link_id)] if link_id else []
     if basket is not None and basket.entries:
         parts.append(discord.ui.TextDisplay(basket_line(basket)))
-        with contextlib.suppress(LinkError):  # e.g. a basket file's CDN URL expires soon
-            # An in-place edit keeps the link it shows while the basket is unchanged; a new panel
-            # can't recover a token (only hashes are stored), so it gets a new one and older
-            # panels' Basket ZIP stops working. `mint=False`: an older panel only keeps the link
-            # it shows and never revokes the live panel's.
-            token, _ = state.store.basket_link(user_id, basket_token, mint=mint)
-            url = page_url(state.settings.public_base_url, token, "zip")
-            buttons.append(discord.ui.Button(label="Basket ZIP", emoji="🧺", url=url, id=ID_BASKET))
+        if state.dm_baskets.live(user_id):
+            # The DM message owns the basket link. While it is being posted there's no jump yet;
+            # the reply is redrawn once it's there (see update()).
+            if jump := state.dm_baskets.jump_url(user_id):
+                buttons.append(jump_button(jump))
+        else:
+            with contextlib.suppress(LinkError):  # e.g. a basket file's CDN URL expires soon
+                # An in-place edit keeps the link it shows while the basket is unchanged; a new
+                # panel can't recover a token (only hashes are stored), so it gets a new one and
+                # older panels' Basket ZIP stops working. `mint=False`: an older panel only
+                # keeps the link it shows and never revokes the live panel's.
+                token, _ = state.store.basket_link(user_id, basket_token, mint=mint)
+                url = page_url(state.settings.public_base_url, token, "zip")
+                buttons.append(discord.ui.Button(label="Basket ZIP", emoji="🧺", url=url, id=ID_BASKET))
         buttons.append(BasketClearButton())
     if link_id:
         buttons.append(RevokeButton(link_id))
@@ -437,7 +564,7 @@ def basket_panel(state: AppState, user_id: int, note: str | None = None) -> Repl
     basket = state.store.basket(user_id)
     if basket is None or not basket.entries:
         return "\n".join(t for t in (note, BASKET_EMPTY) if t)
-    head = f"🧺 **Basket: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}**"
+    head = basket_head(basket)
     try:
         token, record = state.store.basket_link(user_id)
     except LinkError as exc:
@@ -449,6 +576,66 @@ def basket_panel(state: AppState, user_id: int, note: str | None = None) -> Repl
         link_summary(record, head=head),
         *previews(record),
         link_row(link, BasketClearButton(), zip_label="Basket ZIP"),
+    )
+
+
+def basket_reply(state: AppState, user_id: int, note: str, added: int | None = None) -> Reply:
+    """After an add: a toast while the DM basket message is live (or being posted), otherwise
+    the basket panel. `added`: how many files were added (None: nothing changed)."""
+    basket = state.store.basket(user_id)
+    if basket is None or not basket.entries or not state.dm_baskets.live(user_id):
+        return basket_panel(state, user_id, note)
+    count = plural(basket.file_count, "file")
+    if added is not None:
+        return Toast(f"✓ Added {plural(added, 'file')} — 🧺 {count} in your basket", note)
+    return Toast(f"{note}\n-# 🧺 {count} in your basket", note)
+
+
+def basket_toast(state: AppState, user_id: int) -> Toast | None:
+    """`/basket show` while the DM basket message is live: a pointer to it."""
+    basket = state.store.basket(user_id)
+    if basket is None or not basket.entries or not state.dm_baskets.live(user_id):
+        return None
+    return Toast(f"{basket_line(basket)} · in your DMs")
+
+
+def dm_basket_view(state: AppState, user_id: int) -> tuple[discord.ui.LayoutView, LinkRecord | None] | None:
+    """The DM basket message: the basket panel plus Refresh, with a fresh basket link (only this
+    message mints it while it is live). None: the basket is empty or gone."""
+    basket = state.store.basket(user_id)
+    if basket is None or not basket.entries:
+        return None
+    head = basket_head(basket)
+    try:
+        token, record = state.store.basket_link(user_id)
+    except LinkError as exc:
+        buttons = row(BasketClearButton(), BasketRefreshButton())
+        return layout(f"{head}\nCouldn't create a link: {exc}.", buttons), None
+    link = PanelLink.new(state.settings.public_base_url, token, record)
+    view = layout(
+        link_summary(record, head=head),
+        *previews(record),
+        link_row(link, BasketClearButton(), BasketRefreshButton(), zip_label="Basket ZIP"),
+    )
+    return view, record
+
+
+def dm_expired_view() -> discord.ui.LayoutView:
+    """What an expired DM basket message turns into: no links, thumbnails or file names."""
+    return layout(BASKET_EXPIRED)
+
+
+def clear_basket(state: AppState, user_id: int) -> bool:
+    """Empty the basket (revoking its link) and delete the DM basket message."""
+    state.dm_baskets.cleared(user_id)
+    return state.store.clear_basket(user_id)
+
+
+def is_dm_basket(message: Any) -> bool:
+    """Whether a message is a DM basket message (live or stale), by its Refresh button."""
+    return any(
+        (getattr(c, "custom_id", None) or "").startswith(DM_MARKER)
+        for c in walk(getattr(message, "components", None) or ())
     )
 
 
@@ -577,14 +764,23 @@ class AddLinkToBasketButton(
             await update(interaction, LINK_EXPIRED)
             return
         result, _ = state.store.add_to_basket(user_id, record.message_key or record.link_id, record.items)
+        if result is AddResult.ADDED:
+            state.dm_baskets.changed(user_id)
         note = basket_note(state.settings, result, len(record.items))
         link = panel_link(interaction)
-        if link is None:
-            await update(interaction, basket_panel(state, user_id, note))
+        if link is None:  # the panel can't be redrawn: a toast or the basket panel instead
+            added = len(record.items) if result is AddResult.ADDED else None
+            await update(interaction, basket_reply(state, user_id, note, added))
             return
-        # Only the live panel mints a new basket link; an older one keeps the link it shows.
+        # The panel is edited in place. While the DM basket message is live its basket line
+        # jumps there; otherwise only the live panel mints a new basket link.
         token, mint = shown_basket_token(interaction), owns_basket_link(interaction)
-        await update(interaction, link_panel(state, user_id, link, note=note, basket_token=token, mint=mint))
+
+        def render(extra: str | None) -> Reply:
+            text = "\n".join(t for t in (note, extra) if t)
+            return link_panel(state, user_id, link, note=text, basket_token=token, mint=mint)
+
+        await update(interaction, render(None), rerender=render)
 
 
 class BasketLinkButton(
@@ -609,7 +805,8 @@ class BasketLinkButton(
         return cls()
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        await update(interaction, basket_panel(app(interaction), interaction.user.id))
+        state, user_id = app(interaction), interaction.user.id
+        await update(interaction, basket_toast(state, user_id) or basket_panel(state, user_id))
 
 
 class BasketClearButton(
@@ -633,7 +830,15 @@ class BasketClearButton(
 
     async def callback(self, interaction: discord.Interaction) -> None:
         state = app(interaction)
-        state.store.clear_basket(interaction.user.id)
+        user_id = interaction.user.id
+        clear_basket(state, user_id)
+        message = interaction.message
+        if message is not None and not message.flags.ephemeral and is_dm_basket(message):
+            if state.dm_baskets.is_live_message(user_id, message.id):
+                await interaction.response.defer()  # the DM basket message is deleted next
+            else:  # an old one (from before a restart, or replaced)
+                await interaction.response.edit_message(view=dm_expired_view())
+            return
         link = panel_link(interaction)
         if link:
             reply = link_panel(state, interaction.user.id, link, note=BASKET_CLEARED)
@@ -642,9 +847,53 @@ class BasketClearButton(
         await update(interaction, reply)
 
 
+class BasketRefreshButton(
+    RateLimited, discord.ui.DynamicItem[discord.ui.Button[Any]], template=rf"{DM_MARKER}refresh"
+):
+    """On the DM basket message only: redraw it with a fresh link. On an old copy (from before a
+    restart), the copy becomes the live message again if the basket still exists, else it
+    turns into "Basket expired"."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Refresh",
+                emoji="🔄",
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"{DM_MARKER}refresh",
+            )
+        )
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str], /
+    ) -> BasketRefreshButton:
+        return cls()
+
+    async def callback(self, interaction: discord.Interaction) -> None:
+        state = app(interaction)
+        user_id = interaction.user.id
+        message, channel_id = interaction.message, interaction.channel_id
+        if message is None or channel_id is None:
+            return
+        basket = state.store.basket(user_id)
+        dm = state.dm_baskets
+        if basket is not None and basket.entries and dm.take_over(user_id, channel_id, message.id):
+            await interaction.response.defer()  # redrawn by the DM basket's editor
+            return
+        dm.forget_message(user_id, message.id)
+        await interaction.response.edit_message(view=dm_expired_view())
+
+
 def owns_basket_link(interaction: discord.Interaction) -> bool:
     message = interaction.message
     return app(interaction).panels.owns_basket_link(interaction.user.id, message.id if message else None)
 
 
-DYNAMIC_ITEMS = (RevokeButton, AddLinkToBasketButton, BasketLinkButton, BasketClearButton)
+DYNAMIC_ITEMS = (
+    RevokeButton,
+    AddLinkToBasketButton,
+    BasketLinkButton,
+    BasketClearButton,
+    BasketRefreshButton,
+)

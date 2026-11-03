@@ -215,6 +215,10 @@ class Store:
         if b.link_id:
             self.revoke(b.link_id, user_id)
 
+    def basket_expires_at(self, user_id: int) -> float | None:
+        b = self.basket(user_id)
+        return None if b is None else b.touched_at + self.basket_ttl_sec
+
     def add_to_basket(
         self, user_id: int, message_key: str, items: Sequence[MediaItem]
     ) -> tuple[AddResult, Basket]:

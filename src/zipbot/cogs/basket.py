@@ -27,13 +27,17 @@ class BasketCog(
     @app_commands.command(name="show", description="Show what's in your basket")
     @per_user_cooldown
     async def show(self, interaction: discord.Interaction) -> None:
-        await views.show(interaction, handlers.basket_show_reply(self.bot, interaction.user.id))
+        await views.show(interaction, self.reply(interaction))
 
     @app_commands.command(name="link", description="Get a download link for everything in your basket")
     @per_user_cooldown
     async def link(self, interaction: discord.Interaction) -> None:
-        # Same panel as `show`: it always carries a fresh basket link.
-        await views.show(interaction, handlers.basket_show_reply(self.bot, interaction.user.id))
+        # Same as `show`: the panel always carries a fresh basket link (or jumps to the DM one).
+        await views.show(interaction, self.reply(interaction))
+
+    def reply(self, interaction: discord.Interaction) -> views.Reply:
+        in_bot_dm = bool(getattr(interaction, "context", None) and interaction.context.dm_channel)
+        return handlers.basket_show_reply(self.bot, interaction.user.id, in_bot_dm=in_bot_dm)
 
     @app_commands.command(name="clear", description="Empty your basket")
     @per_user_cooldown

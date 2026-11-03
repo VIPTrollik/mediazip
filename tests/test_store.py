@@ -272,6 +272,12 @@ def test_expiring_basket_revokes_its_link(store: Store, clock: Clock) -> None:
     assert store.active_links(8) == 0 and store.resolve(token) is None
 
 
+def test_basket_expires_at(store: Store, clock: Clock) -> None:
+    assert store.basket_expires_at(7) is None
+    store.add_to_basket(7, "m1", [item()])
+    assert store.basket_expires_at(7) == clock.t + 3600
+
+
 def test_basket_link_without_minting(store: Store) -> None:
     store.add_to_basket(7, "m1", [item("a.jpg")])
     token, record = store.basket_link(7)

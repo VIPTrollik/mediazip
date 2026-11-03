@@ -134,7 +134,10 @@ class DmCog(commands.Cog):
             else:
                 await burst.channel.send(view=reply)
         except discord.HTTPException as exc:
-            log.warning("DM reply failed: %s", type(exc).__name__)
+            # 50007: the user blocked the app; 50278: the bot can't DM them (no install, no server).
+            log.warning("DM reply failed: %s %s", type(exc).__name__, exc.code or "")
+            if isinstance(exc, discord.Forbidden):
+                self.bot.dm_baskets.mark_unavailable(user_id)
 
 
 async def setup(bot: ZipBot) -> None:
