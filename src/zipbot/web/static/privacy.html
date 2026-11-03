@@ -6,7 +6,7 @@
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1e1f22" media="(prefers-color-scheme: dark)">
-<title>Privacy policy</title>
+<title>Privacy policy · MediaZip</title>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -14,11 +14,11 @@
   <article class="prose">
     <header class="page-header">
       <h1>Privacy policy</h1>
-      <p class="muted">Discord media downloader · last updated 3 November 2026</p>
+      <p class="muted">MediaZip · last updated 3 November 2026</p>
     </header>
 
     <h2>What this app does</h2>
-    <p>When you use <b>Download media</b>, <b>Add to ZIP basket</b>, <code>/basket</code>, or send messages to the bot in a DM,
+    <p>When you use <b>Download media</b>, <b>Add to ZIP</b>, <code>/zip</code>, or send messages to the bot in a DM,
       the app reads the image and video attachments and embeds of those messages and creates a short-lived download link for you.</p>
 
     <h2>What is stored, and for how long</h2>
@@ -26,10 +26,10 @@
       <li><b>In memory only, never on disk:</b> for each link — your Discord user ID, the Discord CDN addresses, file names,
         sizes and dimensions of the media, and a one-way hash of the link's secret. Links expire after at most 60 minutes
         (sooner if Discord's file links expire first) and can be revoked at any time with <b>Revoke link</b>.</li>
-      <li><b>Basket:</b> the same kind of data for the messages you add, kept for 60 minutes after your last change,
-        or until you clear it. The bot shows your basket in one message in its DM with you; clearing the basket deletes
-        that message, and when the basket expires it is edited to "Basket expired", without links, previews or file
-        names. A message left over from a restart is cleaned up the next time you use the basket.</li>
+      <li><b>Your ZIP</b> (<b>Add to ZIP</b>): the same kind of data for the messages you add, kept for 60 minutes after
+        your last change, or until you clear it. The bot shows your ZIP in one message in its DM with you; clearing it
+        deletes that message, and when it expires the message is edited to "Your ZIP expired", without links, previews
+        or file names. A message left over from a restart is cleaned up the next time you use Add to ZIP or <code>/zip</code>.</li>
       <li>Everything is deleted when it expires or when the service restarts.</li>
     </ul>
 

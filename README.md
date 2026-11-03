@@ -1,17 +1,17 @@
-# Discord media downloader
+# MediaZip
 
 Save every image and video of a Discord message (or a few messages) at once — as a ZIP or
 straight to your phone — from inside the Discord app.
 
 - **Right-click / long-press a message → Apps → Download media.** The reply (only you see it)
   is one panel: thumbnails of the files and one-tap buttons **⬇️ Download all** and
-  **🗜️ Download ZIP**, plus **Add to basket** and **Revoke**. A new reply replaces your previous one.
-- **Add to ZIP basket** on several messages (or **Add to basket** on a reply): your basket
-  lives in one message in the bot's DM (posted silently, then kept up to date), with
-  **🧺 Basket ZIP** for one ZIP with a folder per message. Each add answers with a short note
-  and an **Open basket** link to it (also `/basket show`); **Clear basket** deletes it, and it
-  turns into "Basket expired" when the basket does. If the bot can't DM you, the basket shows
-  in the reply panel instead (`BASKET_DM=false` does that for everyone).
+  **🗜️ Download ZIP**, plus **Add to ZIP** and **Revoke**. A new reply replaces your previous one.
+- **Add to ZIP** on several messages (or on a reply): your ZIP lives in one message in the
+  bot's DM (posted silently, then kept up to date), with **🗜️ Download your ZIP** for one ZIP
+  with a folder per message. Each add answers with a short note and an **Open your ZIP** link
+  to it (also `/zip show`); **Clear your ZIP** deletes it, and it turns into "Your ZIP
+  expired" when it does. If the bot can't DM you, your ZIP shows in the reply panel instead
+  (`BASKET_DM=false` does that for everyone). Internally this is still the "basket".
 - **Forward messages to the bot's DM** (or upload photos and videos there): one reply with a link for all
   of them.
 
@@ -82,7 +82,7 @@ Then point your reverse proxy at `http://127.0.0.1:8080` and check
 `https://<host>/healthz` → `{"status": "ok"}`. Slash commands and context menus appear in
 Discord within a minute; restart the Discord app if they don't.
 
-Update: `git pull && docker compose up -d --build`. Links and baskets are lost on restart
+Update: `git pull && docker compose up -d --build`. Links and ZIPs (baskets) are lost on restart
 (they are short-lived by design). When a command changed (e.g. "Download attachments" is
 "Download media" again since media became the scope), the bot re-syncs on start; restart the
 Discord app if the old name still shows.

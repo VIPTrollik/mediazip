@@ -4,10 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<meta name="description" content="Download every image and video of a Discord message at once, as a ZIP or straight to your device.">
+<meta name="description" content="MediaZip saves every image and video in a Discord message at once, as separate files or one ZIP, straight to your device.">
 <meta name="theme-color" content="#f6f7f9" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#1e1f22" media="(prefers-color-scheme: dark)">
-<title>Discord media downloader</title>
+<title>MediaZip: every image and video, saved or zipped</title>
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/landing.css">
 </head>
@@ -15,9 +15,10 @@
 <main class="landing">
   <section class="hero" aria-labelledby="title">
     <div class="hero__text">
-      <h1 id="title">Discord media downloader</h1>
-      <p class="hero__lead">Download every image and video of a Discord message at once — as a ZIP or straight to your device.
-        Photos, GIFs and video clips, in one go.</p>
+      <p class="hero__brand">MediaZip</p>
+      <h1 id="title">Every image and video, saved or zipped.</h1>
+      <p class="hero__lead">Choose <b>Download media</b> on a message. MediaZip replies privately: <b>Download all</b>
+        for separate files, or <b>Download ZIP</b>. Add more messages with <b>Add to ZIP</b>.</p>
       <div class="actions">
         <a class="btn btn--primary btn--lg" href="/install">
           <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-plus"/></svg>Add to Discord
@@ -90,20 +91,21 @@
       </li>
       <li class="card step">
         <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-download"/></svg></span>
-        <h3>Download</h3>
+        <h3>Save or zip</h3>
         <p>In the reply only you can see, tap <b>Download all</b> for separate files or <b>Download ZIP</b> for one archive.</p>
       </li>
       <li class="card step">
-        <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-share"/></svg></span>
-        <h3>Or forward it</h3>
-        <p>Forward messages to the bot in a DM, or upload photos and videos there, and get one link for all of them.</p>
+        <span class="step__icon"><svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-archive"/></svg></span>
+        <h3>Collect more</h3>
+        <p>Use <b>Apps</b> → <b>Add to ZIP</b> on other messages, then <b>Download your ZIP</b> for one archive with a folder per message.
+          Or forward them to MediaZip in a DM.</p>
       </li>
     </ol>
   </section>
 
   <div class="card card--flat note landing__note">
     <svg class="icon" aria-hidden="true"><use href="/static/icons.svg#i-lock"/></svg>
-    <p>Your images and videos go straight from Discord to your device. This server never stores them, keeps no file names in its logs,
+    <p>Your images and videos go straight from Discord to your device. MediaZip never stores them, keeps no file names in its logs,
       and download links are short-lived. <a href="/privacy">How your data is handled</a></p>
   </div>
 </main>

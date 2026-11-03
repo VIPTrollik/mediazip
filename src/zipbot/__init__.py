@@ -1,1 +1,1 @@
-"""Discord media downloader: links to a page that ZIPs files in the browser."""
+"""MediaZip: a Discord app that links to a page that ZIPs images and videos in the browser."""

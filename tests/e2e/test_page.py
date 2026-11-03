@@ -314,7 +314,7 @@ def test_zip_download(page: Page, server: tuple[str, Store], cdn: Cdn) -> None:
     assert "3 files" in (page.text_content("#summary") or "")
     with page.expect_download() as dl:
         page.click("#btn-zip")
-    assert dl.value.suggested_filename.startswith("discord-files-")
+    assert dl.value.suggested_filename.startswith("mediazip-")
     entries = zip_entries(dl.value.path())
     assert entries == {"01/a.jpg": b"a.jpg", "01/a (1).jpg": b"a.jpg", "02/b.mp4": b"b.mp4"}
     wait_state(page, "done")
@@ -353,7 +353,7 @@ def test_zip_streams_into_save_file_picker(page: Page, server: tuple[str, Store]
     page.click("#btn-zip")
     wait_state(page, "done")
     (opts,) = page.evaluate("window.__save.calls")
-    assert opts["suggestedName"].startswith("discord-files-") and opts["startIn"] == "downloads"
+    assert opts["suggestedName"].startswith("mediazip-") and opts["startIn"] == "downloads"
     assert zip_entries(bytes(page.evaluate("window.__save.bytes"))) == {
         "01/a.jpg": b"a.jpg",
         "02/b.pdf": b"b.pdf",

@@ -96,7 +96,7 @@ function formatDuration(secs) {
 function zipName() {
   const d = new Date();
   const p = (n) => String(n).padStart(2, "0");
-  return `discord-files-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.zip`;
+  return `mediazip-${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}.zip`;
 }
 
 // "01/a.jpg" -> {folder: "01", base: "a.jpg"}: the server puts files from several messages in folders.

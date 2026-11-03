@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zipbot"
 version = "0.0.0"
-description = "Discord app: download all images/videos of a message, ZIP built in the browser"
+description = "MediaZip: a Discord app to download all images/videos of a message, ZIP built in the browser"
 requires-python = ">=3.12"
 dependencies = [
     "discord.py==2.7.1",

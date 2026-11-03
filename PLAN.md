@@ -1,4 +1,4 @@
-# Discord Media Downloader — Implementation Plan
+# MediaZip — Implementation Plan
 
 Status: **v0.0.0 released (G7 signed off by the user, 2026-11-02).** The `/security-review` skill runs after the first push. Last updated 2026-11-02.
 
@@ -39,6 +39,12 @@ From the Discord docs:
 - ⇒ **No privileged intents required.**
 
 ## 3. UX
+
+> **Naming (2026-11-03, MediaZip):** users see the basket as **"your ZIP"**. The context menu is **Add to ZIP**
+> (was "Add to ZIP basket"), the group is **`/zip`** (was `/basket`), and the buttons read **Add to ZIP**,
+> **Download your ZIP** (was "Basket ZIP"), **Open your ZIP** and **Clear your ZIP**; texts use "🗜️ Your ZIP: …"
+> instead of "🧺 Basket: …". The mock-ups below keep the old labels. Internal names and the `zb:basket…` /
+> `zb:dmbasket:` custom_ids are unchanged, so buttons already posted keep working.
 
 ### A. Context menu — "Download media" (v0.1: one live panel, "Design A" at G-UX)
 Right-click / long-press message → Apps → **Download media**.
@@ -90,7 +96,7 @@ One long-lived message per user in the bot DM holds the basket, so it survives A
 ### Download page (`https://<host>/d#<token>`)
 - Thumbnail grid (images via media proxy resize params; videos show a placeholder + duration if known).
 - **Save to phone** — the **primary action on mobile** (decided at G0): downloads each file individually, ~300 ms apart. Files land in Downloads and Android indexes them into the gallery.
-- **Download ZIP** — the primary action on desktop; fetches each file directly from CDN, streams into `client-zip`, saves as `discord-media-YYYYMMDD-HHMM.zip`. Per-file progress.
+- **Download ZIP** — the primary action on desktop; fetches each file directly from CDN, streams into `client-zip`, saves as `mediazip-YYYYMMDD-HHMM.zip`. Per-file progress.
 - **Share** — a secondary action, shown when `navigator.canShare({files})` is true. Phase 0 found that on Pixel it only offers cloud upload ("Upload to Photos"), not a local save.
 - Per-file download links.
 - Expiry countdown; clear error state for "link expired or invalid" and "Discord file no longer available".

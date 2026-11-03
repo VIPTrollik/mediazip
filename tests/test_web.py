@@ -74,6 +74,14 @@ async def test_copy_is_about_images_and_videos(client: Any, path: str) -> None:
     assert "Download media" in html or path == "/terms"
 
 
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms"])
+async def test_pages_carry_the_product_name(client: Any, path: str) -> None:
+    html = await (await client.get(path)).text()
+    assert "MediaZip" in html
+    for old in ("Discord media downloader", "basket", "Basket"):
+        assert old not in html, old
+
+
 @pytest.mark.parametrize(
     ("path", "ctype"),
     [
