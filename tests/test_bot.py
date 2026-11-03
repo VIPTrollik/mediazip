@@ -865,3 +865,27 @@ async def test_click_on_a_deleted_panel_is_acknowledged(state: Any) -> None:
     await RevokeButton(record.link_id).callback(inter)  # no "This interaction failed"
     inter.response.send_message.assert_awaited_once_with(PANEL_GONE, ephemeral=True)
     assert len(state.panels) == 0
+
+
+async def test_add_on_an_older_panel_keeps_the_live_basket_link(state: Any) -> None:
+    state.store.add_to_basket(7, "b/1", [item("x.jpg")])
+    old_view, old_record = link_of(state)  # a panel that has since been replaced
+    live = interaction(state)
+    live_view = panel(link_of(state)[0])
+    await views.show(live, live_view)
+    live_basket = basket_zip_url(live_view)
+    assert live_basket and state.store.resolve(token_of(live_basket))
+
+    click = interaction(state, message=message_of(old_view))
+    await AddLinkToBasketButton(old_record.link_id).callback(click)
+    edited = click.response.edit_message.call_args.kwargs["view"]
+    assert "🧺 Basket: 3 files from 2 messages" in texts(edited)
+    assert basket_zip_url(edited) is None  # no new basket link from an older panel...
+    assert state.store.resolve(token_of(live_basket))  # ...so the live one's isn't revoked
+
+    live_message = message_of(live_view)
+    live_message.id = live.sent.message_id
+    on_live = interaction(state, message=live_message)
+    await RevokeButton(old_record.link_id).callback(on_live)
+    assert basket_zip_url(on_live.response.edit_message.call_args.kwargs["view"])  # the live one mints
+    await drain()

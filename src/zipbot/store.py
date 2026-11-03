@@ -236,11 +236,14 @@ class Store:
             self._baskets.pop(user_id, None)
         return result, b
 
-    def basket_link(self, user_id: int, token: str | None = None) -> tuple[str, LinkRecord]:
+    def basket_link(
+        self, user_id: int, token: str | None = None, *, mint: bool = True
+    ) -> tuple[str, LinkRecord]:
         """A link for the whole basket. `token` (a basket link a panel already shows) is kept if
         it is still the basket's live link and the basket hasn't changed since; otherwise the
         previous basket link is revoked and a new one made, so each user has at most one and
-        re-rendering a panel doesn't use up their link cap."""
+        re-rendering a panel doesn't use up their link cap. With `mint=False` only `token` can
+        come back: a panel that doesn't own the basket link never revokes it."""
         b = self.basket(user_id)
         if b is None or not b.entries:
             raise LinkError("your basket is empty")
@@ -248,6 +251,8 @@ class Store:
             current = self.resolve(token)
             if current and current.link_id == b.link_id and current.owner_id == user_id:
                 return token, current
+        if not mint:
+            raise LinkError("the basket link is shown elsewhere")
         if b.link_id:
             self.revoke(b.link_id, user_id)
             b.link_id = None

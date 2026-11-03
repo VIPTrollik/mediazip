@@ -148,6 +148,14 @@ class Panels:
             return
         self._set(user_id, _Panel(interaction, message_id, self.clock(), ticket))
 
+    def owns_basket_link(self, user_id: int, message_id: int | None) -> bool:
+        """Whether a click on `message_id` may mint a new basket link: only the live panel (or
+        any, if none is live) may, so an older panel never revokes the live one's Basket ZIP."""
+        if message_id in self._doomed:
+            return False
+        live = self._get(user_id)
+        return live is None or live.message_id == message_id
+
     def _get(self, user_id: int) -> _Panel | None:
         now = self.clock()
         while self._live and next(iter(self._live.values())).at + PANEL_TOKEN_SEC <= now:
@@ -372,7 +380,12 @@ def layout(*parts: discord.ui.Item[Any] | str | None) -> discord.ui.LayoutView:
 
 
 def basket_parts(
-    state: AppState, user_id: int, link_id: str | None, basket_token: str | None = None
+    state: AppState,
+    user_id: int,
+    link_id: str | None,
+    basket_token: str | None = None,
+    *,
+    mint: bool = True,
 ) -> list[discord.ui.Item[Any]]:
     """Below a link: the basket line and one row: Add to basket, Basket ZIP, Clear, Revoke."""
     basket = state.store.basket(user_id)
@@ -383,8 +396,9 @@ def basket_parts(
         with contextlib.suppress(LinkError):  # e.g. a basket file's CDN URL expires soon
             # An in-place edit keeps the link it shows while the basket is unchanged; a new panel
             # can't recover a token (only hashes are stored), so it gets a new one and older
-            # panels' Basket ZIP stops working.
-            token, _ = state.store.basket_link(user_id, basket_token)
+            # panels' Basket ZIP stops working. `mint=False`: an older panel only keeps the link
+            # it shows and never revokes the live panel's.
+            token, _ = state.store.basket_link(user_id, basket_token, mint=mint)
             url = page_url(state.settings.public_base_url, token, "zip")
             buttons.append(discord.ui.Button(label="Basket ZIP", emoji="🧺", url=url, id=ID_BASKET))
         buttons.append(BasketClearButton())
@@ -403,17 +417,18 @@ def link_panel(
     note: str | None = None,
     truncated_from: int | None = None,
     basket_token: str | None = None,
+    mint: bool = True,
 ) -> discord.ui.LayoutView:
     """A link's panel. Without a link (revoked), only the note and the basket part remain."""
     if link is None:
-        return layout(note, *basket_parts(state, user_id, None, basket_token))
+        return layout(note, *basket_parts(state, user_id, None, basket_token, mint=mint))
     record = link.record
     return layout(
         note,
         link_summary(record, truncated_from=truncated_from),
         *previews(record),
         link_row(link),
-        *basket_parts(state, user_id, record.link_id, basket_token),
+        *basket_parts(state, user_id, record.link_id, basket_token, mint=mint),
     )
 
 
@@ -524,7 +539,12 @@ class RevokeButton(
         revoked = state.store.revoke(self.link_id, interaction.user.id)
         note = REVOKED if revoked else LINK_GONE
         reply = link_panel(
-            state, interaction.user.id, None, note=note, basket_token=shown_basket_token(interaction)
+            state,
+            interaction.user.id,
+            None,
+            note=note,
+            basket_token=shown_basket_token(interaction),
+            mint=owns_basket_link(interaction),
         )
         await update(interaction, reply)
 
@@ -559,8 +579,12 @@ class AddLinkToBasketButton(
         result, _ = state.store.add_to_basket(user_id, record.message_key or record.link_id, record.items)
         note = basket_note(state.settings, result, len(record.items))
         link = panel_link(interaction)
-        reply = link_panel(state, user_id, link, note=note) if link else basket_panel(state, user_id, note)
-        await update(interaction, reply)
+        if link is None:
+            await update(interaction, basket_panel(state, user_id, note))
+            return
+        # Only the live panel mints a new basket link; an older one keeps the link it shows.
+        token, mint = shown_basket_token(interaction), owns_basket_link(interaction)
+        await update(interaction, link_panel(state, user_id, link, note=note, basket_token=token, mint=mint))
 
 
 class BasketLinkButton(
@@ -616,6 +640,11 @@ class BasketClearButton(
         else:
             reply = layout(BASKET_CLEARED)
         await update(interaction, reply)
+
+
+def owns_basket_link(interaction: discord.Interaction) -> bool:
+    message = interaction.message
+    return app(interaction).panels.owns_basket_link(interaction.user.id, message.id if message else None)
 
 
 DYNAMIC_ITEMS = (RevokeButton, AddLinkToBasketButton, BasketLinkButton, BasketClearButton)

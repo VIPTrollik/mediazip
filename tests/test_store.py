@@ -270,3 +270,15 @@ def test_expiring_basket_revokes_its_link(store: Store, clock: Clock) -> None:
     clock.t += 1800
     store.sweep()
     assert store.active_links(8) == 0 and store.resolve(token) is None
+
+
+def test_basket_link_without_minting(store: Store) -> None:
+    store.add_to_basket(7, "m1", [item("a.jpg")])
+    token, record = store.basket_link(7)
+    assert store.basket_link(7, token, mint=False) == (token, record)  # unchanged: reused
+    store.add_to_basket(7, "m2", [item("b.jpg")])
+    with pytest.raises(LinkError):
+        store.basket_link(7, token, mint=False)  # changed: no new link from here
+    with pytest.raises(LinkError):
+        store.basket_link(7, None, mint=False)
+    assert store.resolve(token) is record  # and the old one is not revoked
