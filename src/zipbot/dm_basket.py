@@ -10,7 +10,7 @@ Per user, in memory:
     NONE ──add──▶ posting ──sent──▶ LIVE ──change──▶ (one edit in flight, the latest state wins)
                     │                 ├─ link ran out ──────▶ redrawn with a fresh link
                     │                 ├─ clear ─────────────▶ deleted ─▶ NONE
-                    │                 ├─ basket expiry ─────▶ "Basket expired" ─▶ NONE
+                    │                 ├─ basket expiry ─────▶ "Your ZIP expired" ─▶ NONE
                     │                 ├─ edit 404 (deleted) ─▶ posted anew, in the same run
                     │                 └─ edit 403 ──────────▶ unavailable
                     └─ send fails ─▶ unavailable (6 h for 403 50007/50278, else 5 min): panels
@@ -405,7 +405,7 @@ class DmBaskets:
             self._shown(user_id, ref, record)
 
     async def _expire_message(self, channel_id: int, message_id: int) -> bool:
-        """Turn a message into "Basket expired". False: a network error, worth retrying."""
+        """Turn a message into "Your ZIP expired". False: a network error, worth retrying."""
         try:
             await self._channel(channel_id).get_partial_message(message_id).edit(view=views.dm_expired_view())
         except (discord.NotFound, discord.Forbidden):

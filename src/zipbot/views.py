@@ -2,8 +2,9 @@
 
 Every reply that carries a link is one Components V2 panel: a summary line, a strip of
 thumbnails, the link buttons (`#<token>.files`, `#<token>.zip`; each opens the page and
-starts that action right away) and a row for the basket. A user has one live ephemeral panel:
-a new one deletes the previous one (`Panels`), and a button edits the panel it sits on.
+starts that action right away) and a row for the basket ("your ZIP" to users). A user has
+one live ephemeral panel: a new one deletes the previous one (`Panels`), and a button edits
+the panel it sits on.
 """
 
 from __future__ import annotations
@@ -72,14 +73,17 @@ REVOKED = (
 )
 LINK_GONE = "This link has already expired or was revoked."
 LINK_EXPIRED = "This link has expired — run the command again."
-BASKET_EMPTY = "🧺 Your basket is empty — use **Apps → Add to ZIP basket** on a message first."
-BASKET_CLEARED = "🧺 Basket cleared."
-BASKET_EXPIRED = "🧺 Basket expired"
+BASKET_EMPTY = "🗜️ Your ZIP is empty — use **Apps → Add to ZIP** on a message first."
+BASKET_CLEARED = "🗜️ ZIP cleared."
+BASKET_ALREADY_EMPTY = "🗜️ Your ZIP is already empty."
+BASKET_EXPIRED = "🗜️ Your ZIP expired"
 PANEL_GONE = "That panel was just replaced — use your newer one."
-DM_POSTING = "-# Posting your basket in your DMs…"
-DM_FALLBACK = "-# Couldn't post your basket in your DMs; showing it here."
+DM_POSTING = "-# Posting your ZIP in your DMs…"
+DM_FALLBACK = "-# Couldn't post your ZIP in your DMs; showing it here."
 # The DM basket message's own buttons; also how its old copies are found after a restart.
 DM_MARKER = "zb:dmbasket:"
+# The collected archive's button, so it isn't confused with a single message's "Download ZIP".
+BASKET_ZIP = "Download your ZIP"
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,7 +185,7 @@ class Panels:
 
     def owns_basket_link(self, user_id: int, message_id: int | None) -> bool:
         """Whether a click on `message_id` may mint a new basket link: only the live panel (or
-        any, if none is live) may, so an older panel never revokes the live one's Basket ZIP."""
+        any, if none is live) may, so an older panel never revokes the live one's Download your ZIP."""
         if message_id in self._doomed:
             return False
         live = self._get(user_id)
@@ -292,7 +296,7 @@ async def _rerender_when_settled(
 
 
 def jump_button(url: str) -> discord.ui.Button[Any]:
-    return discord.ui.Button(label="Open basket", emoji="🧺", url=url, id=ID_JUMP)
+    return discord.ui.Button(label="Open your ZIP", emoji="🗜️", url=url, id=ID_JUMP)
 
 
 def toast_view(text: str, jump: str | None) -> discord.ui.LayoutView:
@@ -399,11 +403,13 @@ def link_summary(record: LinkRecord, *, truncated_from: int | None = None, head:
 
 
 def basket_line(basket: Basket) -> str:
-    return f"🧺 Basket: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}"
+    return f"🗜️ Your ZIP: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}"
 
 
 def basket_head(basket: Basket) -> str:
-    return f"🧺 **Basket: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}**"
+    return (
+        f"🗜️ **Your ZIP: {plural(basket.file_count, 'file')} from {plural(len(basket.entries), 'message')}**"
+    )
 
 
 def jump_url(channel_id: int, message_id: int) -> str:
@@ -517,8 +523,8 @@ def basket_parts(
     *,
     mint: bool = True,
 ) -> list[discord.ui.Item[Any]]:
-    """Below a link: the basket line and one row: Add to basket, Basket ZIP (or Open basket, a
-    jump to the DM basket message), Clear, Revoke."""
+    """Below a link: the basket line and one row: Add to ZIP, Download your ZIP (or Open your
+    ZIP, a jump to the DM basket message), Clear your ZIP, Revoke."""
     basket = state.store.basket(user_id)
     parts: list[discord.ui.Item[Any]] = [discord.ui.Separator()]
     buttons: list[discord.ui.Item[Any]] = [AddLinkToBasketButton(link_id)] if link_id else []
@@ -533,11 +539,11 @@ def basket_parts(
             with contextlib.suppress(LinkError):  # e.g. a basket file's CDN URL expires soon
                 # An in-place edit keeps the link it shows while the basket is unchanged; a new
                 # panel can't recover a token (only hashes are stored), so it gets a new one and
-                # older panels' Basket ZIP stops working. `mint=False`: an older panel only
+                # older panels' Download your ZIP stops working. `mint=False`: an older panel only
                 # keeps the link it shows and never revokes the live panel's.
                 token, _ = state.store.basket_link(user_id, basket_token, mint=mint)
                 url = page_url(state.settings.public_base_url, token, "zip")
-                buttons.append(discord.ui.Button(label="Basket ZIP", emoji="🧺", url=url, id=ID_BASKET))
+                buttons.append(discord.ui.Button(label=BASKET_ZIP, emoji="🗜️", url=url, id=ID_BASKET))
         buttons.append(BasketClearButton())
     if link_id:
         buttons.append(RevokeButton(link_id))
@@ -585,7 +591,7 @@ def basket_panel(state: AppState, user_id: int, note: str | None = None) -> Repl
         note,
         link_summary(record, head=head),
         *previews(record),
-        link_row(link, BasketClearButton(), zip_label="Basket ZIP"),
+        link_row(link, BasketClearButton(), zip_label=BASKET_ZIP),
     )
 
 
@@ -597,12 +603,12 @@ def basket_reply(state: AppState, user_id: int, note: str, added: int | None = N
         return basket_panel(state, user_id, note)
     count = plural(basket.file_count, "file")
     if added is not None:
-        return Toast(f"✓ Added {plural(added, 'file')} — 🧺 {count} in your basket", note)
-    return Toast(f"{note}\n-# 🧺 {count} in your basket", note)
+        return Toast(f"✓ Added {plural(added, 'file')} — 🗜️ {count} in your ZIP", note)
+    return Toast(f"{note}\n-# 🗜️ {count} in your ZIP", note)
 
 
 def basket_toast(state: AppState, user_id: int) -> Toast | None:
-    """`/basket show` while the DM basket message is live: a pointer to it."""
+    """`/zip show` while the DM basket message is live: a pointer to it."""
     basket = state.store.basket(user_id)
     if basket is None or not basket.entries or not state.dm_baskets.live(user_id):
         return None
@@ -625,7 +631,7 @@ def dm_basket_view(state: AppState, user_id: int) -> tuple[discord.ui.LayoutView
     view = layout(
         link_summary(record, head=head),
         *previews(record),
-        link_row(link, BasketClearButton(), BasketRefreshButton(), zip_label="Basket ZIP"),
+        link_row(link, BasketClearButton(), BasketRefreshButton(), zip_label=BASKET_ZIP),
     )
     return view, record
 
@@ -687,8 +693,8 @@ def panel_link(interaction: discord.Interaction) -> PanelLink | None:
 # --- buttons ---------------------------------------------------------------------------
 
 BASKET_RESULT_TEXT = {
-    AddResult.DUPLICATE: "That message is already in your basket.",
-    AddResult.FULL_MESSAGES: "Your basket is full (message limit). Download or clear it first.",
+    AddResult.DUPLICATE: "That message is already in your ZIP.",
+    AddResult.FULL_MESSAGES: "Your ZIP is full (message limit). Download or clear it first.",
     AddResult.FULL_FILES: "That would exceed the file limit for one link. Download or clear it first.",
 }
 MEDIA_WORDS = {"image": "images", "video": "videos", "audio": "audio files"}
@@ -705,7 +711,7 @@ def nothing_to_download(settings: Settings, this: str = "That") -> str:
 
 def basket_note(settings: Settings, result: AddResult, added: int) -> str:
     if result is AddResult.ADDED:
-        return f"✓ Added {plural(added, 'file')} to your basket."
+        return f"✓ Added {plural(added, 'file')} to your ZIP."
     if result is AddResult.EMPTY:
         return nothing_to_download(settings)
     return BASKET_RESULT_TEXT[result]
@@ -752,7 +758,7 @@ class AddLinkToBasketButton(
     def __init__(self, link_id: str) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Add to basket",
+                label="Add to ZIP",
                 emoji="➕",
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"zb:basket:{link_id}",
@@ -825,7 +831,7 @@ class BasketClearButton(
     def __init__(self) -> None:
         super().__init__(
             discord.ui.Button(
-                label="Clear basket",
+                label="Clear your ZIP",
                 emoji="🧹",
                 style=discord.ButtonStyle.secondary,
                 custom_id="zb:basketclear",
@@ -862,7 +868,7 @@ class BasketRefreshButton(
 ):
     """On the DM basket message only: redraw it with a fresh link. On an old copy (from before a
     restart), the copy becomes the live message again if the basket still exists, else it
-    turns into "Basket expired"."""
+    turns into "Your ZIP expired"."""
 
     def __init__(self) -> None:
         super().__init__(

@@ -165,12 +165,12 @@ async def test_commands_registered_for_every_context(settings: Settings) -> None
     for ext in EXTENSIONS:
         await bot.load_extension(ext)
     payloads = {c.name: c.to_dict(bot.tree) for c in bot.tree.get_commands()}
-    assert set(payloads) == {"Download media", "Add to ZIP basket", "basket"}
+    assert set(payloads) == {"Download media", "Add to ZIP", "zip"}
     for p in payloads.values():
         assert sorted(p["integration_types"]) == [0, 1]
         assert sorted(p["contexts"]) == [0, 1, 2]
     assert payloads["Download media"]["type"] == 3
-    assert {o["name"] for o in payloads["basket"]["options"]} == {"show", "link", "clear"}
+    assert {o["name"] for o in payloads["zip"]["options"]} == {"show", "link", "clear"}
     for ext in EXTENSIONS:
         await bot.unload_extension(ext)
     assert bot.tree.get_commands() == []
@@ -197,7 +197,7 @@ async def test_download_reply_panel(state: Any) -> None:
     record = state.store.resolve(token_of(files_url))
     assert record and record.message_key == "c/m"
     assert custom_ids(view) == [f"zb:basket:{record.link_id}", f"zb:revoke:{record.link_id}"]
-    assert "Basket" not in text(view)  # no basket yet
+    assert "Your ZIP" not in text(view)  # no basket yet
 
     thumbs = gallery(view)
     assert len(thumbs) == 5  # images and the video's first frame
@@ -382,9 +382,9 @@ def test_format_size(n: int, text: str) -> None:
 def test_basket_handlers(state: Any) -> None:
     assert handlers.basket_show_reply(state, 7) == BASKET_EMPTY
     view = panel(handlers.add_to_basket_reply(state, 7, media_payload(), "c/1"))
-    assert texts(view)[0] == "✓ Added 5 files to your basket."
-    assert texts(view)[1].startswith("🧺 **Basket: 5 files from 1 message** · 51 KB · link expires <t:")
-    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Basket ZIP"]
+    assert texts(view)[0] == "✓ Added 5 files to your ZIP."
+    assert texts(view)[1].startswith("🗜️ **Your ZIP: 5 files from 1 message** · 51 KB · link expires <t:")
+    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Download your ZIP"]
     assert custom_ids(view) == ["zb:basketclear"]
     first_token = token_of(main_urls(view)[0])
 
@@ -396,13 +396,13 @@ def test_basket_handlers(state: Any) -> None:
     assert len(gallery(view)) == 6
 
     view = panel(handlers.add_to_basket_reply(state, 7, media_payload(), "c/1"))
-    assert texts(view)[0] == "That message is already in your basket."
+    assert texts(view)[0] == "That message is already in your ZIP."
     assert state.store.active_links(7) == 1
 
     cleared = panel(handlers.basket_clear_reply(state, 7))
     assert texts(cleared) == [BASKET_CLEARED]
     assert state.store.active_links(7) == 0  # clearing revokes the basket link
-    assert handlers.basket_clear_reply(state, 7) == "🧺 Your basket is already empty."
+    assert handlers.basket_clear_reply(state, 7) == "🗜️ Your ZIP is already empty."
     assert handlers.basket_show_reply(state, 7) == BASKET_EMPTY
 
 
@@ -422,10 +422,10 @@ def test_basket_link_error(state: Any) -> None:
 def test_link_panel_shows_the_basket(state: Any) -> None:
     handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
     view, record = link_of(state)
-    assert "🧺 Basket: 5 files from 1 message" in texts(view)
+    assert "🗜️ Your ZIP: 5 files from 1 message" in texts(view)
     second_row = [c for c in flat(view) if c["type"] == 1][1]["components"]
     labels = [b["label"] for b in second_row]
-    assert labels == ["Add to basket", "Basket ZIP", "Clear basket", "Revoke"]
+    assert labels == ["Add to ZIP", "Download your ZIP", "Clear your ZIP", "Revoke"]
     basket_url = basket_zip_url(view)
     assert basket_url and basket_url.endswith(".zip")
     basket_record = state.store.resolve(token_of(basket_url))
@@ -460,9 +460,9 @@ async def test_add_link_to_basket_button(state: Any) -> None:
     inter = interaction(state, message=message_of(view))
     await AddLinkToBasketButton(record.link_id).callback(inter)
     edited = inter.response.edit_message.call_args.kwargs["view"]
-    assert texts(edited)[0] == "✓ Added 2 files to your basket."
+    assert texts(edited)[0] == "✓ Added 2 files to your ZIP."
     assert main_urls(edited) == main_urls(view)  # the same link, taken back from the message
-    assert "🧺 Basket: 2 files from 1 message" in texts(edited)
+    assert "🗜️ Your ZIP: 2 files from 1 message" in texts(edited)
     assert basket_zip_url(edited)
     basket = state.store.basket(7)
     assert basket and basket.entries[0].message_key == "c/m"
@@ -470,7 +470,7 @@ async def test_add_link_to_basket_button(state: Any) -> None:
     again = interaction(state, message=message_of(edited))
     await AddLinkToBasketButton(record.link_id).callback(again)
     assert texts(again.response.edit_message.call_args.kwargs["view"])[0] == (
-        "That message is already in your basket."
+        "That message is already in your ZIP."
     )
 
     other = interaction(state, user_id=8, message=message_of(view))
@@ -485,7 +485,7 @@ async def test_add_button_without_the_panel_link_shows_the_basket(state: Any) ->
     inter = interaction(state, message=bare)  # the link buttons' URLs can't be recovered
     await AddLinkToBasketButton(record.link_id).callback(inter)
     edited = inter.response.edit_message.call_args.kwargs["view"]
-    assert texts(edited)[1].startswith("🧺 **Basket: 2 files from 1 message**")
+    assert texts(edited)[1].startswith("🗜️ **Your ZIP: 2 files from 1 message**")
 
 
 async def test_clear_button(state: Any) -> None:
@@ -552,6 +552,35 @@ def test_every_rendered_button_routes_to_a_dynamic_item(state: Any) -> None:
     assert len(ids) == 4
     for cid in ids:
         assert sum(bool(d.__discord_ui_compiled_template__.fullmatch(cid)) for d in DYNAMIC_ITEMS) == 1
+
+
+@pytest.mark.parametrize(
+    "custom_id",
+    [
+        "zb:basket:abcDEF_-12",
+        "zb:basketlink",
+        "zb:basketclear",
+        "zb:dmbasket:refresh",
+        "zb:revoke:abcDEF_-12",
+    ],
+)
+def test_custom_ids_from_before_the_rename_still_route(custom_id: str) -> None:
+    """Buttons already posted (DM panels, the DM basket message) keep their custom_ids: the
+    MediaZip rename changed only labels, so each one still maps to exactly one DynamicItem."""
+    assert sum(bool(d.__discord_ui_compiled_template__.fullmatch(custom_id)) for d in DYNAMIC_ITEMS) == 1
+
+
+def test_renamed_buttons_keep_their_custom_ids(state: Any) -> None:
+    view, record = link_of(state)
+    assert custom_ids(view) == [f"zb:basket:{record.link_id}", f"zb:revoke:{record.link_id}"]
+    handlers.add_to_basket_reply(state, 7, media_payload(), "c/1")
+    view, record = link_of(state)
+    labels = {c["custom_id"]: c["label"] for c in flat(view) if c["type"] == 2 and "custom_id" in c}
+    assert labels == {
+        f"zb:basket:{record.link_id}": "Add to ZIP",
+        "zb:basketclear": "Clear your ZIP",
+        f"zb:revoke:{record.link_id}": "Revoke",
+    }
 
 
 async def test_click_routes_through_discord_py(settings: Settings, state: Any) -> None:
@@ -711,7 +740,7 @@ async def test_revoke_keeps_the_shown_basket_link(state: Any) -> None:
     inter = interaction(state, message=message_of(view))
     await RevokeButton(record.link_id).callback(inter)
     edited = inter.response.edit_message.call_args.kwargs["view"]
-    assert basket_zip_url(edited) == shown  # basket unchanged: Basket ZIP elsewhere keeps working
+    assert basket_zip_url(edited) == shown  # basket unchanged: Download your ZIP elsewhere keeps working
     assert state.store.resolve(token_of(shown))
 
 
@@ -818,6 +847,8 @@ async def test_error_handler(settings: Settings, state: Any, done: bool) -> None
         (0, "description", "old text"),
         (1, "name", "Download attachments"),  # the any-file name: Discord keeps it until we re-sync
         (0, "description", "Collect attachments from several messages"),  # ditto
+        (0, "name", "basket"),  # the names before the MediaZip rename (`/zip`, "Add to ZIP")
+        (2, "name", "Add to ZIP basket"),
     ],
 )
 async def test_sync_only_when_commands_changed(
@@ -888,7 +919,7 @@ async def test_add_on_an_older_panel_keeps_the_live_basket_link(state: Any) -> N
     click = interaction(state, message=message_of(old_view))
     await AddLinkToBasketButton(old_record.link_id).callback(click)
     edited = click.response.edit_message.call_args.kwargs["view"]
-    assert "🧺 Basket: 3 files from 2 messages" in texts(edited)
+    assert "🗜️ Your ZIP: 3 files from 2 messages" in texts(edited)
     assert basket_zip_url(edited) is None  # no new basket link from an older panel...
     assert state.store.resolve(token_of(live_basket))  # ...so the live one's isn't revoked
 

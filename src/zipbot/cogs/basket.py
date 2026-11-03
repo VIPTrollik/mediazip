@@ -1,4 +1,4 @@
-"""/basket show | link | clear."""
+"""/zip show | link | clear: the basket, called "your ZIP" in the app."""
 
 from __future__ import annotations
 
@@ -18,18 +18,20 @@ if TYPE_CHECKING:
 @app_commands.allowed_installs(guilds=True, users=True)
 @app_commands.allowed_contexts(guilds=True, dms=True, private_channels=True)
 class BasketCog(
-    commands.GroupCog, group_name="basket", group_description="Collect media from several messages"
+    commands.GroupCog,
+    group_name="zip",
+    group_description="Collect images and videos from several messages into one ZIP",
 ):
     def __init__(self, bot: ZipBot) -> None:
         self.bot = bot
         super().__init__()
 
-    @app_commands.command(name="show", description="Show what's in your basket")
+    @app_commands.command(name="show", description="Show what's in your ZIP")
     @per_user_cooldown
     async def show(self, interaction: discord.Interaction) -> None:
         await views.show(interaction, self.reply(interaction))
 
-    @app_commands.command(name="link", description="Get a download link for everything in your basket")
+    @app_commands.command(name="link", description="Get a download link for your ZIP")
     @per_user_cooldown
     async def link(self, interaction: discord.Interaction) -> None:
         # Same as `show`: the panel always carries a fresh basket link (or jumps to the DM one).
@@ -39,7 +41,7 @@ class BasketCog(
         in_bot_dm = bool(getattr(interaction, "context", None) and interaction.context.dm_channel)
         return handlers.basket_show_reply(self.bot, interaction.user.id, in_bot_dm=in_bot_dm)
 
-    @app_commands.command(name="clear", description="Empty your basket")
+    @app_commands.command(name="clear", description="Empty your ZIP")
     @per_user_cooldown
     async def clear(self, interaction: discord.Interaction) -> None:
         await views.show(interaction, handlers.basket_clear_reply(self.bot, interaction.user.id))

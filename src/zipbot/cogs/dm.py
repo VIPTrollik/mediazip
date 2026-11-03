@@ -1,8 +1,8 @@
 """Trigger B: forward or upload media to the bot's DM (PLAN.md §3).
 
 Messages arriving within DM_DEBOUNCE_SEC form one burst; the bot then replies once with a
-link panel for exactly that burst (one ZIP folder per message). "Add to basket" on the panel
-puts the burst into the user's basket if they want to combine it with more.
+link panel for exactly that burst (one ZIP folder per message). "Add to ZIP" on the panel
+puts the burst into the user's basket ("your ZIP") if they want to combine it with more.
 
 A burst is bounded (security review v0 #1): it holds at most MAX_FILES_PER_LINK items and is
 sent as soon as it is full, or at most 3x DM_DEBOUNCE_SEC (capped at BURST_MAX_SEC) after its
@@ -33,7 +33,8 @@ log = logging.getLogger(__name__)
 
 HELP = (
     "Forward me messages with images or videos (or upload them here) and I'll reply with one "
-    "download link for all of them. You can also use **Apps → Download media** on any message."
+    "download link for all of them. You can also use **Apps → Download media** on any message, "
+    "or **Apps → Add to ZIP** on several to collect them into one ZIP."
 )
 BURST_MAX_SEC = 30  # a burst's whole lifetime is at most min(3 * debounce, this)
 BUSY = "You're sending a lot at once — wait a minute, then forward the rest."

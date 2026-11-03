@@ -188,7 +188,7 @@ async def posted(env: Any) -> Any:
 async def test_first_add_posts_silently_and_the_toast_jumps_there(env: Any) -> None:
     reply = add(env)
     assert isinstance(reply, Toast)
-    assert reply.text == "✓ Added 5 files — 🧺 5 files in your basket"
+    assert reply.text == "✓ Added 5 files — 🗜️ 5 files in your ZIP"
     inter = interaction(env)
     await views.show(inter, reply)  # answered at once: nothing waits for the DM
     first = inter.response.send_message.call_args.kwargs
@@ -201,8 +201,8 @@ async def test_first_add_posts_silently_and_the_toast_jumps_there(env: Any) -> N
     assert silent is True  # SUPPRESS_NOTIFICATIONS: no push for the new DM
     message = live_message(env)
     assert message.view is view
-    assert text(view).startswith("🧺 **Basket: 5 files from 1 message** · 51 KB · link expires <t:")
-    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Basket ZIP"]
+    assert text(view).startswith("🗜️ **Your ZIP: 5 files from 1 message** · 51 KB · link expires <t:")
+    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Download your ZIP"]
     assert custom_ids(view) == ["zb:basketclear", "zb:dmbasket:refresh"]
 
     edited = inter.edit_original_response.call_args.kwargs["view"]
@@ -264,7 +264,7 @@ async def test_unchanged_basket_is_not_edited(env: Any) -> None:
     await posted(env)
     reply = add(env)  # the same message again
     assert isinstance(reply, Toast)
-    assert reply.text.startswith("That message is already in your basket.\n-# 🧺 5 files")
+    assert reply.text.startswith("That message is already in your ZIP.\n-# 🗜️ 5 files")
     await settle(env)
     assert dm_channel(env).edits == []
 
@@ -326,7 +326,7 @@ async def test_failed_expiry_is_retried_by_the_tick(env: Any) -> None:
     env.clock.t += env.store.basket_ttl_sec
     env.dm_baskets.tick()
     await settle(env)
-    assert "Basket:" in text(message.view) and env.dm_baskets.live(7)  # kept for a retry
+    assert "Your ZIP:" in text(message.view) and env.dm_baskets.live(7)  # kept for a retry
     ch.edit_error = None
     env.clock.t += dm_basket.TICK_SEC
     env.dm_baskets.tick()
@@ -378,7 +378,7 @@ async def test_link_expiry_before_the_basket_redraws_with_a_fresh_link(env: Any)
     env.clock.t += 1800
     env.dm_baskets.tick()
     await settle(env)
-    assert "🧺 **Basket: 5 files from 1 message**" in text(message.view)  # still live, not expired
+    assert "🗜️ **Your ZIP: 5 files from 1 message**" in text(message.view)  # still live, not expired
     new = tokens(message.view)
     assert new and new != old and all(env.store.resolve(t) for t in new)
     assert env.dm_baskets.is_live_message(7, message.id)
@@ -401,7 +401,7 @@ async def test_many_panels_never_evict_the_dm_basket_link(env: Any) -> None:
     shown = tokens(message.view)
     for n in range(3 * env.settings.max_active_links_per_user):  # Download media / DM bursts
         handlers.download_reply(env, 7, media_payload(), f"c/{100 + n}")
-    assert all(env.store.resolve(t) for t in shown)  # Basket ZIP and Open basket still work
+    assert all(env.store.resolve(t) for t in shown)  # Download your ZIP and Open your ZIP still work
     env.dm_baskets.tick()
     await settle(env)
     assert dm_channel(env).edits == []
@@ -442,8 +442,8 @@ async def test_send_failure_falls_back_to_the_panel(env: Any, error: BaseExcepti
     await views.show(inter, add(env))
     await settle(env)
     fallback = inter.edit_original_response.call_args.kwargs["view"]
-    assert text(fallback).startswith(f"✓ Added 5 files to your basket.\n{DM_FALLBACK}\n🧺 **Basket: 5 files")
-    assert [b["label"] for b in link_buttons(fallback)] == ["Download all", "Basket ZIP"]
+    assert text(fallback).startswith(f"✓ Added 5 files to your ZIP.\n{DM_FALLBACK}\n🗜️ **Your ZIP: 5 files")
+    assert [b["label"] for b in link_buttons(fallback)] == ["Download all", "Download your ZIP"]
     inter.delete_original_response.assert_not_awaited()  # it is the live panel now
     assert len(env.panels) == 1
     assert not env.dm_baskets.usable(7) and not env.dm_baskets.live(7)
@@ -518,9 +518,9 @@ async def test_link_panel_jumps_to_the_dm_basket_and_never_mints(env: Any) -> No
     links = env.store.active_links(7)
     view = handlers.download_reply(env, 7, media_payload(), "c/9")
     assert isinstance(view, discord.ui.LayoutView)
-    assert "🧺 Basket: 5 files from 1 message" in text(view)
+    assert "🗜️ Your ZIP: 5 files from 1 message" in text(view)
     assert jump_of(view) == env.dm_baskets.jump_url(7)
-    assert not any(b.get("id") == ID_BASKET for b in link_buttons(view))  # no Basket ZIP
+    assert not any(b.get("id") == ID_BASKET for b in link_buttons(view))  # no Download your ZIP
     assert env.store.active_links(7) == links + 1  # just the panel's own link
 
 
@@ -532,7 +532,7 @@ async def test_add_button_edits_its_panel_and_jumps_to_the_dm(env: Any) -> None:
     inter = interaction(env, message=panel_message(view))
     await AddLinkToBasketButton(link_id).callback(inter)
     edited = inter.response.edit_message.call_args.kwargs["view"]
-    assert "🧺 Basket: 6 files from 2 messages" in text(edited)
+    assert "🗜️ Your ZIP: 6 files from 2 messages" in text(edited)
     assert jump_of(edited) == env.dm_baskets.jump_url(7)
     await settle(env)
     assert "6 files from 2 messages" in text(live_message(env).view)
@@ -546,7 +546,7 @@ async def test_add_button_during_the_first_post_redraws_with_the_jump(env: Any) 
     inter = interaction(env, message=panel_message(view))
     await AddLinkToBasketButton(link_id).callback(inter)
     first = inter.response.edit_message.call_args.kwargs["view"]
-    assert "🧺 Basket: 5 files" in text(first) and jump_of(first) is None  # being posted
+    assert "🗜️ Your ZIP: 5 files" in text(first) and jump_of(first) is None  # being posted
     assert not any(b.get("id") == ID_BASKET for b in link_buttons(first))
     await settle(env)
     redrawn = inter.edit_original_response.call_args.kwargs["view"]
@@ -563,7 +563,7 @@ async def test_add_button_falls_back_when_the_dm_fails(env: Any) -> None:
     await settle(env)
     redrawn = inter.edit_original_response.call_args.kwargs["view"]
     assert DM_FALLBACK in text(redrawn)
-    assert any(b.get("id") == ID_BASKET for b in link_buttons(redrawn))  # today's Basket ZIP
+    assert any(b.get("id") == ID_BASKET for b in link_buttons(redrawn))  # today's Download your ZIP
 
 
 def panel_message(view: discord.ui.LayoutView, *, ephemeral: bool = True) -> Any:
@@ -582,7 +582,7 @@ async def test_basket_show_points_at_the_dm_message(env: Any) -> None:
     assert isinstance(handlers.basket_show_reply(env, 7), discord.ui.LayoutView)  # not live: the panel
     await posted(env)
     reply = handlers.basket_show_reply(env, 7)
-    assert isinstance(reply, Toast) and reply.text.startswith("🧺 Basket: 6 files from 2 messages")
+    assert isinstance(reply, Toast) and reply.text.startswith("🗜️ Your ZIP: 6 files from 2 messages")
     inter = interaction(env)
     await views.show(inter, reply)
     assert jump_of(inter.response.send_message.call_args.kwargs["view"]) == env.dm_baskets.jump_url(7)
@@ -667,7 +667,7 @@ async def test_stale_refresh_revives_the_message_or_expires_it(env: Any) -> None
     click.response.defer.assert_awaited_once()
     await settle(env)
     assert env.dm_baskets.jump_url(7) == views.jump_url(ch.id, old.id)  # live again, where it was
-    assert "🧺 **Basket: 5 files" in text(old.view)
+    assert "🗜️ **Your ZIP: 5 files" in text(old.view)
 
     restart(env)
     env.store.clear_basket(7)

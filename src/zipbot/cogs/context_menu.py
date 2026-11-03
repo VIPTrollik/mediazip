@@ -1,4 +1,4 @@
-"""Message context menus: "Download media" (A) and "Add to ZIP basket" (A2)."""
+"""Message context menus: "Download media" (A) and "Add to ZIP" (A2, the basket)."""
 
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ class ContextMenus(commands.Cog):
                 allowed_contexts=CONTEXTS,
             ),
             app_commands.ContextMenu(
-                name="Add to ZIP basket",
+                name="Add to ZIP",
                 callback=self.add,
                 allowed_installs=INSTALLS,
                 allowed_contexts=CONTEXTS,

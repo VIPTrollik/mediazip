@@ -12,6 +12,7 @@ import discord
 from zipbot.media import MediaItem, extract, payload_from_message
 from zipbot.store import AddResult, LinkError
 from zipbot.views import (
+    BASKET_ALREADY_EMPTY,
     BASKET_CLEARED,
     AppState,
     DmPost,
@@ -77,7 +78,7 @@ def download_reply(state: AppState, user_id: int, payload: Mapping[str, Any], ke
 def burst_reply(
     state: AppState, user_id: int, items: Sequence[MediaItem], messages: int, total: int | None = None
 ) -> Panel:
-    """One DM burst → one link; "Add to basket" then adds the whole burst as one entry."""
+    """One DM burst → one link; "Add to ZIP" then adds the whole burst as one entry."""
     note = f"📨 {messages} messages" if messages > 1 else None
     return link_reply(state, user_id, items, None, total=total, note=note)
 
@@ -104,4 +105,4 @@ def basket_show_reply(state: AppState, user_id: int, *, in_bot_dm: bool = False)
 def basket_clear_reply(state: AppState, user_id: int) -> Reply:
     if clear_basket(state, user_id):
         return layout(BASKET_CLEARED)  # replaces the panel whose basket buttons are now stale
-    return "🧺 Your basket is already empty."
+    return BASKET_ALREADY_EMPTY

@@ -46,7 +46,7 @@ class LinkRecord:
     names: tuple[str, ...]
     created_at: float
     expires_at: float
-    message_key: str | None = None  # source message, so "Add to basket" can dedupe
+    message_key: str | None = None  # source message, so "Add to ZIP" can dedupe
 
     @property
     def total_size(self) -> int:
@@ -263,7 +263,7 @@ class Store:
         come back: a panel that doesn't own the basket link never revokes it."""
         b = self.basket(user_id)
         if b is None or not b.entries:
-            raise LinkError("your basket is empty")
+            raise LinkError("your ZIP is empty")
         if token and b.link_version == b.version:
             current = self.resolve(token)
             if current and current.link_id == b.link_id and current.owner_id == user_id:
