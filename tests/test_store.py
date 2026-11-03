@@ -253,3 +253,20 @@ def test_basket_link_is_reused_while_unchanged(store: Store) -> None:
     other, _ = store.create_link(7, [item()])
     assert store.basket_link(7, other)[0] != other  # only the basket's own link is reused
     assert store.basket_link(7, "bogus")[0]
+
+
+def test_expiring_basket_revokes_its_link(store: Store, clock: Clock) -> None:
+    """A13: the basket link never outlives the basket, whether `basket()` or `sweep()` drops it."""
+    store.add_to_basket(7, "m1", [item()])
+    clock.t += 1800
+    token, _ = store.basket_link(7)  # minted late: valid for 60 min, the basket for 30 more
+    clock.t += 1800
+    assert store.basket(7) is None
+    assert store.active_links(7) == 0 and store.resolve(token) is None
+
+    store.add_to_basket(8, "m1", [item()])
+    clock.t += 1800
+    token, _ = store.basket_link(8)
+    clock.t += 1800
+    store.sweep()
+    assert store.active_links(8) == 0 and store.resolve(token) is None

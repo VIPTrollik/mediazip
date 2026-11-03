@@ -205,9 +205,15 @@ class Store:
         if b is None:
             return None
         if b.touched_at + self.basket_ttl_sec <= self.clock():
-            del self._baskets[user_id]
+            self._expire_basket(user_id)
             return None
         return b
+
+    def _expire_basket(self, user_id: int) -> None:
+        """An idle basket goes, and its link with it: a link never outlives its basket."""
+        b = self._baskets.pop(user_id)
+        if b.link_id:
+            self.revoke(b.link_id, user_id)
 
     def add_to_basket(
         self, user_id: int, message_key: str, items: Sequence[MediaItem]
@@ -264,7 +270,7 @@ class Store:
             self._drop(h)
         stale = [u for u, b in self._baskets.items() if b.touched_at + self.basket_ttl_sec <= now]
         for u in stale:
-            del self._baskets[u]
+            self._expire_basket(u)
         return len(dead) + len(stale)
 
     def __len__(self) -> int:
