@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import itertools
+import logging
 import re
 from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
@@ -27,7 +28,7 @@ from helpers import (
 from zipbot import dm_basket, handlers, views
 from zipbot.bot import ZipBot
 from zipbot.config import Settings
-from zipbot.dm_basket import SCAN_LIMIT, UNAVAILABLE_SEC, DmBaskets
+from zipbot.dm_basket import BACKOFF_SEC, SCAN_LIMIT, UNAVAILABLE_SEC, DmBaskets
 from zipbot.store import Store
 from zipbot.views import (
     BASKET_EXPIRED,
@@ -80,9 +81,15 @@ async def env(settings: Settings) -> AsyncIterator[Any]:
         fake=fake,
         clock=clock,
     )
-    ns.dm_baskets = DmBaskets(cast(Any, ns), gap=0)
+    restart(ns)
     yield ns
     await ns.dm_baskets.close()
+
+
+def restart(env: Any, **kw: Any) -> None:
+    """A fresh DM basket (as after a bot restart), wired to the store like ZipBot does."""
+    env.dm_baskets = DmBaskets(cast(Any, env), gap=0, **kw)
+    env.store.on_basket_link_gone = env.dm_baskets.link_gone
 
 
 _ids = itertools.count(7000)
@@ -302,6 +309,47 @@ async def test_clear_then_add_before_the_delete_lands_keeps_one_message(env: Any
     assert "1 file from 1 message" in text(live_message(env).view)
 
 
+async def test_failed_delete_falls_back_to_expired(env: Any) -> None:
+    message = await posted(env)
+    ch = dm_channel(env)
+    ch.delete_error = aiohttp.ClientConnectionError("reset")
+    handlers.basket_clear_reply(env, 7)
+    await settle(env)
+    assert_expired(message.view)  # not deleted, but no names or thumbnails left behind
+    assert not env.dm_baskets.live(7)
+
+
+async def test_failed_expiry_is_retried_by_the_tick(env: Any) -> None:
+    message = await posted(env)
+    ch = dm_channel(env)
+    ch.edit_error = aiohttp.ClientConnectionError("reset")
+    env.clock.t += env.store.basket_ttl_sec
+    env.dm_baskets.tick()
+    await settle(env)
+    assert "Basket:" in text(message.view) and env.dm_baskets.live(7)  # kept for a retry
+    ch.edit_error = None
+    env.clock.t += dm_basket.TICK_SEC
+    env.dm_baskets.tick()
+    await settle(env)
+    assert_expired(message.view)
+    assert not env.dm_baskets.live(7)
+
+
+async def test_expiry_retries_are_bounded(env: Any) -> None:
+    await posted(env)
+    dm_channel(env).edit_error = aiohttp.ClientConnectionError("reset")
+    env.clock.t += env.store.basket_ttl_sec
+    for _ in range(dm_basket.MAX_RETRIES + 1):
+        env.dm_baskets.tick()
+        await settle(env)
+        env.clock.t += dm_basket.TICK_SEC
+    assert not env.dm_baskets.live(7)  # given up
+    edits_tried = len(dm_channel(env).edits)
+    env.dm_baskets.tick()
+    await settle(env)
+    assert len(dm_channel(env).edits) == edits_tried
+
+
 def assert_expired(view: Any) -> None:
     assert text(view) == BASKET_EXPIRED
     assert link_buttons(view) == [] and custom_ids(view) == []
@@ -322,42 +370,73 @@ async def test_basket_expiry_edits_it_to_expired(env: Any) -> None:
     assert not env.dm_baskets.live(7) and env.store.active_links(7) == 0
 
 
-async def test_link_expiry_before_the_basket_edits_it_to_expired(env: Any) -> None:
+async def test_link_expiry_before_the_basket_redraws_with_a_fresh_link(env: Any) -> None:
     message = await posted(env)
+    old = tokens(message.view)
     env.clock.t += 1800
     add(env)  # a duplicate: the basket lives on, its link doesn't
     env.clock.t += 1800
     env.dm_baskets.tick()
     await settle(env)
-    assert_expired(message.view)
-    assert env.store.basket(7) is not None
+    assert "🧺 **Basket: 5 files from 1 message**" in text(message.view)  # still live, not expired
+    new = tokens(message.view)
+    assert new and new != old and all(env.store.resolve(t) for t in new)
+    assert env.dm_baskets.is_live_message(7, message.id)
 
 
-async def test_deleted_message_is_forgotten_and_posted_again(env: Any) -> None:
+async def test_store_redraws_the_dm_when_the_basket_link_goes(env: Any) -> None:
+    message = await posted(env)
+    old = tokens(message.view)
+    env.clock.t += 1800
+    add(env)  # extends the basket only
+    env.clock.t += 1800
+    env.store.sweep()  # e.g. inside any create_link: the basket's link runs out
+    await settle(env)  # no tick needed
+    new = tokens(message.view)
+    assert new and new != old and all(env.store.resolve(t) for t in new)
+
+
+async def test_many_panels_never_evict_the_dm_basket_link(env: Any) -> None:
+    message = await posted(env)
+    shown = tokens(message.view)
+    for n in range(3 * env.settings.max_active_links_per_user):  # Download media / DM bursts
+        handlers.download_reply(env, 7, media_payload(), f"c/{100 + n}")
+    assert all(env.store.resolve(t) for t in shown)  # Basket ZIP and Open basket still work
+    env.dm_baskets.tick()
+    await settle(env)
+    assert dm_channel(env).edits == []
+
+
+async def test_deleted_message_is_posted_again_at_once(env: Any) -> None:
     message = await posted(env)
     ch = dm_channel(env)
     del ch.messages[message.id]  # the user deleted it
-    add(env, "c/2", fixture("message_image_embed.json"))
-    await settle(env)  # the edit gets 404 / 10008
-    assert not env.dm_baskets.live(7) and len(ch.sends) == 1
-    add(env, "c/3", {"attachments": [media_payload()["attachments"][0]]})
-    await settle(env)
-    assert len(ch.sends) == 2 and live_message(env).id != message.id  # new, where the DM is now
+    inter = interaction(env)
+    await views.show(inter, add(env, "c/2", fixture("message_image_embed.json")))
+    old_jump = jump_of(inter.response.send_message.call_args.kwargs["view"])
+    await settle(env)  # the edit gets 404 / 10008, and the same run posts it anew
+    assert len(ch.sends) == 2
+    new = live_message(env)
+    assert new.id != message.id and "6 files from 2 messages" in text(new.view)
+    new_jump = jump_of(inter.edit_original_response.call_args.kwargs["view"])
+    assert old_jump == views.jump_url(ch.id, message.id) and new_jump == views.jump_url(ch.id, new.id)
 
 
 # --- fallback -------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
-    "error",
+    ("error", "window"),
     [
-        forbidden(50278),  # can't DM this user (not installed, no shared server)
-        forbidden(50007),  # blocked
-        http_error(discord.HTTPException, 500, 0),
-        aiohttp.ClientConnectionError("reset"),
+        (forbidden(50278), UNAVAILABLE_SEC),  # can't DM this user (not installed, no shared server)
+        (forbidden(50007), UNAVAILABLE_SEC),  # blocked
+        (forbidden(50001), BACKOFF_SEC),  # some other 403: not "no DMs", so retried soon
+        (http_error(discord.HTTPException, 500, 0), BACKOFF_SEC),
+        (aiohttp.ClientConnectionError("reset"), BACKOFF_SEC),
+        (TimeoutError(), BACKOFF_SEC),
     ],
 )
-async def test_send_failure_falls_back_to_the_panel(env: Any, error: BaseException) -> None:
+async def test_send_failure_falls_back_to_the_panel(env: Any, error: BaseException, window: float) -> None:
     dm_channel(env).send_error = error
     inter = interaction(env)
     await views.show(inter, add(env))
@@ -374,12 +453,26 @@ async def test_send_failure_falls_back_to_the_panel(env: Any, error: BaseExcepti
     await settle(env)
     assert dm_channel(env).sends == []
 
-    env.clock.t += UNAVAILABLE_SEC
+    env.clock.t += window - 1
+    assert not env.dm_baskets.usable(7)
+    env.clock.t += 1
     dm_channel(env).send_error = None
     assert env.dm_baskets.usable(7)  # tried again after the window
     assert isinstance(add(env, "c/3", {"attachments": [media_payload()["attachments"][0]]}), Toast)
     await settle(env)
     assert len(dm_channel(env).sends) == 1
+
+
+async def test_a_400_is_logged_as_our_bug(env: Any, caplog: pytest.LogCaptureFixture) -> None:
+    dm_channel(env).send_error = http_error(discord.HTTPException, 400, 50035)  # invalid form body
+    with caplog.at_level(logging.INFO, logger="zipbot.dm_basket"):
+        add(env)
+        await settle(env)
+    (record,) = [r for r in caplog.records if r.name == "zipbot.dm_basket"]
+    assert record.levelno == logging.WARNING
+    assert record.getMessage() == "DM basket send failed: HTTPException 50035"  # type and code only
+    env.clock.t += BACKOFF_SEC
+    assert env.dm_baskets.usable(7)
 
 
 async def test_unavailable_marks_are_bounded(env: Any) -> None:
@@ -511,6 +604,21 @@ async def test_basket_command_in_the_bot_dm_becomes_the_dm_message(env: Any) -> 
     assert ch.sends == [] and [mid for mid, _ in ch.edits] == [answer.id]  # edited, not re-posted
 
 
+async def test_add_during_the_bot_dm_answer_leaves_one_live_message(env: Any) -> None:
+    env.store.add_to_basket(7, "k", [item()])
+    reply = handlers.basket_show_reply(env, 7, in_bot_dm=True)
+    assert isinstance(reply, DmPost)
+    ch = dm_channel(env)
+    answer = ch.put(reply.view)
+    add(env, "c/2", fixture("message_image_embed.json"))  # lands while the answer is being sent
+    inter = interaction(env, channel_id=ch.id, in_dm=True)
+    inter.sent.message_id = answer.id
+    await views.show(inter, reply)
+    await settle(env)
+    assert_expired(answer.view)  # the answer is not left behind with names and a gallery
+    assert live_message(env).id != answer.id and len(ch.sends) == 1
+
+
 async def test_basket_cog_answers_in_the_bot_dm(settings: Settings) -> None:
     from zipbot.cogs.basket import BasketCog
 
@@ -532,7 +640,7 @@ async def test_restart_turns_old_basket_messages_into_expired(env: Any) -> None:
     ch = dm_channel(env)
     other_panel = ch.put(handlers.download_reply(env, 7, media_payload(), "c/9"))  # a DM burst reply
     impostor = ch.put(old.view, author_id=7)  # the user's own message: not ours to touch
-    env.dm_baskets = DmBaskets(env, gap=0)  # restart: nothing is known
+    restart(env)  # restart: nothing is known
     env.store.clear_basket(7)
     edits_before = len(ch.edits)
     ch.history_calls.clear()  # the scan of the first start
@@ -553,7 +661,7 @@ async def test_restart_turns_old_basket_messages_into_expired(env: Any) -> None:
 async def test_stale_refresh_revives_the_message_or_expires_it(env: Any) -> None:
     old = await posted(env)
     ch = dm_channel(env)
-    env.dm_baskets = DmBaskets(env, gap=0)  # restart, but the basket is (again) there
+    restart(env)  # restart, but the basket is (again) there
     click = interaction(env, message=old, channel_id=ch.id, in_dm=True)
     await BasketRefreshButton().callback(click)
     click.response.defer.assert_awaited_once()
@@ -561,7 +669,7 @@ async def test_stale_refresh_revives_the_message_or_expires_it(env: Any) -> None
     assert env.dm_baskets.jump_url(7) == views.jump_url(ch.id, old.id)  # live again, where it was
     assert "🧺 **Basket: 5 files" in text(old.view)
 
-    env.dm_baskets = DmBaskets(env, gap=0)
+    restart(env)
     env.store.clear_basket(7)
     click = interaction(env, message=old, channel_id=ch.id, in_dm=True)
     await BasketRefreshButton().callback(click)
@@ -572,7 +680,7 @@ async def test_stale_refresh_revives_the_message_or_expires_it(env: Any) -> None
 async def test_refresh_on_an_old_copy_takes_over(env: Any) -> None:
     first = await posted(env)
     ch = dm_channel(env)
-    env.dm_baskets = DmBaskets(env, gap=0)
+    restart(env)
     await views.show(interaction(env), add(env, "c/2", fixture("message_image_embed.json")))
     await settle(env)  # posted a new one (and expired the first)
     second = live_message(env)
@@ -614,8 +722,22 @@ async def test_clear_on_the_dm_message(env: Any) -> None:
 # --- bounds & wiring ------------------------------------------------------------------
 
 
+async def test_evicted_messages_are_expired(env: Any) -> None:
+    restart(env, cap=2)
+    for user in (1, 2):
+        env.store.add_to_basket(user, "k", [item()])
+        env.dm_baskets.changed(user)
+        await settle(env)
+    first = next(iter(env.fake.dm_of(1).messages.values()))
+    env.store.add_to_basket(3, "k", [item()])
+    env.dm_baskets.changed(3)
+    await settle(env)
+    assert not env.dm_baskets.live(1)
+    assert_expired(first.view)
+
+
 async def test_live_messages_are_bounded(env: Any) -> None:
-    env.dm_baskets = DmBaskets(env, gap=0, cap=2)
+    restart(env, cap=2)
     for user in (1, 2, 3):
         env.store.add_to_basket(user, "k", [item()])
         env.dm_baskets.changed(user)

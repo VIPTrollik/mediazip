@@ -137,7 +137,7 @@ class DmCog(commands.Cog):
             # 50007: the user blocked the app; 50278: the bot can't DM them (no install, no server).
             log.warning("DM reply failed: %s %s", type(exc).__name__, exc.code or "")
             if isinstance(exc, discord.Forbidden):
-                self.bot.dm_baskets.mark_unavailable(user_id)
+                self.bot.dm_baskets.mark_unavailable(user_id, exc)
 
 
 async def setup(bot: ZipBot) -> None:

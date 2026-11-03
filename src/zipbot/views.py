@@ -254,8 +254,9 @@ async def update(
     interaction: discord.Interaction, reply: Reply, rerender: Callable[[str | None], Reply] | None = None
 ) -> None:
     """Answer a button click by editing the panel the button sits on. `rerender(note)` redraws it
-    once the user's DM basket message, being posted right now, is there (or couldn't be posted:
-    then `note` says so)."""
+    once the user's DM basket message, being posted or edited right now, is there, if its jump
+    changed (a first post, or a re-post of a deleted one), or couldn't be posted (then `note`
+    says so)."""
     message = interaction.message
     if not isinstance(reply, discord.ui.LayoutView) or message is None or not message.flags.components_v2:
         await show(interaction, reply)  # notices, toasts; v0.0.0 replies can't become a panel
@@ -270,17 +271,20 @@ async def update(
         return
     if message.flags.ephemeral:  # DM replies are ordinary messages and are never deleted
         state.panels.clicked(interaction.user.id, interaction, message.id, ticket)
-    if rerender is not None and state.dm_baskets.pending(interaction.user.id):
-        state.panels.spawn(_rerender_when_posted(interaction, rerender))
+    dm = state.dm_baskets
+    if rerender is not None and dm.busy(interaction.user.id):
+        state.panels.spawn(_rerender_when_settled(interaction, rerender, dm.jump_url(interaction.user.id)))
 
 
-async def _rerender_when_posted(
-    interaction: discord.Interaction, rerender: Callable[[str | None], Reply]
+async def _rerender_when_settled(
+    interaction: discord.Interaction, rerender: Callable[[str | None], Reply], shown: str | None
 ) -> None:
     dm = app(interaction).dm_baskets
-    jump = await dm.wait_posted(interaction.user.id)
+    jump = await dm.wait_settled(interaction.user.id)
     if jump is None and dm.usable(interaction.user.id):
-        return  # still posting (or the basket went): leave the panel as it is
+        return  # still posting, or the basket went: leave the panel as it is
+    if jump is not None and jump == shown:
+        return  # an edit only: the panel's jump is still right
     reply = rerender(None if jump else DM_FALLBACK)
     if isinstance(reply, discord.ui.LayoutView):
         with contextlib.suppress(*NET_ERRORS):
@@ -306,18 +310,24 @@ async def _toast(interaction: discord.Interaction, toast: Toast) -> None:
     pending = jump is None and dm.pending(interaction.user.id)
     text = f"{toast.text}\n{DM_POSTING}" if pending else toast.text
     response = await interaction.response.send_message(view=toast_view(text, jump), ephemeral=True)
-    app(interaction).panels.spawn(_finish_toast(interaction, toast, pending, _message_id(response)))
+    settle = dm.busy(interaction.user.id)
+    app(interaction).panels.spawn(_finish_toast(interaction, toast, settle, jump, _message_id(response)))
 
 
 async def _finish_toast(
-    interaction: discord.Interaction, toast: Toast, pending: bool, message_id: int | None
+    interaction: discord.Interaction,
+    toast: Toast,
+    settle: bool,
+    shown: str | None,
+    message_id: int | None,
 ) -> None:
-    """Add the jump link once the DM message is posted, then delete the toast. If the DM can't
-    be posted, the toast turns into today's basket panel (which then is the live panel)."""
+    """Once the DM message is posted or edited, fix the toast's jump link if it changed (first
+    post, or a re-post of a deleted message), then delete the toast. If the DM can't be posted,
+    the toast turns into today's basket panel (which then is the live panel)."""
     state = app(interaction)
     user_id = interaction.user.id
-    if pending:
-        jump = await state.dm_baskets.wait_posted(user_id)
+    if settle:
+        jump = await state.dm_baskets.wait_settled(user_id)
         if jump is None and not state.dm_baskets.usable(user_id):
             ticket = state.panels.ticket()
             reply = basket_panel(state, user_id, "\n".join(t for t in (toast.note, DM_FALLBACK) if t))
@@ -326,7 +336,7 @@ async def _finish_toast(
                 await interaction.edit_original_response(view=view)
                 state.panels.opened(user_id, interaction, message_id, ticket)
             return
-        if jump:
+        if jump and jump != shown:
             with contextlib.suppress(*NET_ERRORS):
                 await interaction.edit_original_response(view=toast_view(toast.text, jump))
     await asyncio.sleep(TOAST_SEC)

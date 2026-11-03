@@ -100,6 +100,8 @@ class FakePartialMessage:
     async def delete(self) -> None:
         ch = self.channel
         await ch.wait()
+        if ch.delete_error:
+            raise ch.delete_error
         if self.id not in ch.messages:
             raise not_found()
         del ch.messages[self.id]
@@ -121,6 +123,7 @@ class FakeDmChannel:
         self.history_calls: list[int | None] = []
         self.send_error: BaseException | None = None
         self.edit_error: BaseException | None = None
+        self.delete_error: BaseException | None = None
         self.gate: asyncio.Event | None = None  # if set, every call waits for it
 
     async def wait(self) -> None:

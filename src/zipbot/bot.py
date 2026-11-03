@@ -67,6 +67,7 @@ class ZipBot(commands.Bot):
         self.panels = Panels()  # each user's one live reply panel
         self.button_cooldown = UserCooldown()
         self.dm_baskets = DmBaskets(self)  # each user's basket message in the bot DM
+        store.on_basket_link_gone = self.dm_baskets.link_gone
 
     async def setup_hook(self) -> None:
         for ext in EXTENSIONS:

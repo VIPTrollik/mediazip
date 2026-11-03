@@ -1,28 +1,30 @@
 """The basket as one long-lived message in the bot DM (PLAN.md §3, "DM basket").
 
 On the first add the bot posts the basket to the user's DM (silently) and from then on edits
-that one message: every add, a clear (deletes it), the basket or its link expiring (it turns
-into "Basket expired", with no links, thumbnails or names). While it is live, only this message
-mints the basket link; panels and toasts jump to it.
+that one message: every add, a clear (deletes it), the basket expiring (it turns into "Basket
+expired", with no links, thumbnails or names). While it is live, only this message mints the
+basket link (which the store never evicts); panels and toasts jump to it.
 
 Per user, in memory:
 
     NONE ──add──▶ posting ──sent──▶ LIVE ──change──▶ (one edit in flight, the latest state wins)
+                    │                 ├─ link ran out ──────▶ redrawn with a fresh link
                     │                 ├─ clear ─────────────▶ deleted ─▶ NONE
-                    │                 ├─ basket/link expiry ─▶ "Basket expired" ─▶ NONE
-                    │                 ├─ edit 404 (deleted) ─▶ NONE: the next add posts a new one
+                    │                 ├─ basket expiry ─────▶ "Basket expired" ─▶ NONE
+                    │                 ├─ edit 404 (deleted) ─▶ posted anew, in the same run
                     │                 └─ edit 403 ──────────▶ unavailable
-                    └─ send fails ─▶ unavailable for 6 h: today's ephemeral panels instead
+                    └─ send fails ─▶ unavailable (6 h for 403 50007/50278, else 5 min): panels
 
-After a restart nothing is known: on the user's first basket action the DM's recent history is
-scanned once for the bot's old basket messages (by their Refresh button), which are turned
-into "expired". Their buttons still work: Refresh revives a copy if the basket still exists.
+A delete or expiry edit that fails on the network is retried by the tick (bounded), so names
+and thumbnails don't stay behind. After a restart nothing is known: on the user's first basket
+action the DM's recent history is scanned once for the bot's old basket messages (by their
+Refresh button), which are turned into "expired". Their buttons still work: Refresh revives a
+copy if the basket still exists.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from collections import OrderedDict
 from collections.abc import Coroutine
@@ -36,12 +38,15 @@ from zipbot.views import NET_ERRORS
 
 log = logging.getLogger(__name__)
 
-UNAVAILABLE_SEC = 6 * 3600  # after a failed send, panels only for this long
+UNAVAILABLE_SEC = 6 * 3600  # after a 403 50007/50278 (blocked / can't DM them): panels only
+BACKOFF_SEC = 5 * 60  # after any other failed send (5xx, network, timeout, our own 400)
+NO_DM_CODES = frozenset({50007, 50278})  # 50007: blocked the app; 50278: no way to DM them
 MAX_USERS = 10_000  # each of: live messages, unavailable marks, users scanned since start
 SCAN_LIMIT = 25  # recent DM messages looked at for old basket messages
 POST_WAIT_SEC = 10  # a toast waits this long for the DM message to be posted
 EDIT_GAP_SEC = 1.0  # between two edits of one user's message
 TICK_SEC = 30  # how often expiry is checked
+MAX_RETRIES = 5  # a failed delete/expiry edit is retried this often, one tick apart
 
 Want = Literal["live", "delete", "expire"]
 
@@ -68,6 +73,9 @@ class _Ref:
     want: Want = "live"  # what the next edit makes of the message
     dirty: bool = False  # an edit is due
     posted: asyncio.Event = field(default_factory=asyncio.Event)  # the first send is done (or failed)
+    retry: Want | None = None  # a delete/expiry edit that failed, redone by the tick
+    failures: int = 0
+    stale: list[tuple[int, int]] = field(default_factory=list)  # (channel, message) to expire first
 
 
 def error_code(exc: BaseException) -> int | None:
@@ -99,10 +107,11 @@ class DmBaskets:
         """Whether a DM basket message may be posted for this user."""
         if not self.enabled:
             return False
-        now = self._now()
-        while self._unavailable and next(iter(self._unavailable.values())) <= now:
-            self._unavailable.popitem(last=False)
-        return user_id not in self._unavailable
+        until = self._unavailable.get(user_id)
+        if until is not None and until <= self._now():
+            del self._unavailable[user_id]
+            until = None
+        return until is None
 
     def live(self, user_id: int) -> bool:
         """The user has a DM basket message (or one is being posted)."""
@@ -111,6 +120,10 @@ class DmBaskets:
     def pending(self, user_id: int) -> bool:
         ref = self._refs.get(user_id)
         return self.enabled and ref is not None and ref.message_id is None
+
+    def busy(self, user_id: int) -> bool:
+        """The user's message is being posted or edited right now."""
+        return self.enabled and user_id in self._tasks
 
     def jump_url(self, user_id: int) -> str | None:
         ref = self._refs.get(user_id)
@@ -122,14 +135,12 @@ class DmBaskets:
         ref = self._refs.get(user_id)
         return ref is not None and ref.message_id == message_id
 
-    async def wait_posted(self, user_id: int) -> str | None:
-        """The jump URL once the message being posted is there; None if it failed (then
-        `usable()` is False), the basket went, or it takes longer than POST_WAIT_SEC."""
-        ref = self._refs.get(user_id)
-        if ref is not None and ref.message_id is None:
-            with contextlib.suppress(TimeoutError):
-                async with asyncio.timeout(POST_WAIT_SEC):
-                    await ref.posted.wait()
+    async def wait_settled(self, user_id: int) -> str | None:
+        """The jump URL once the pending post or edit is done (at most POST_WAIT_SEC): the edit
+        may have found the message deleted and posted a new one. None if posting failed (then
+        `usable()` is False) or the basket went."""
+        if (task := self._tasks.get(user_id)) is not None:
+            await asyncio.wait({task}, timeout=POST_WAIT_SEC)  # never cancels the editor
         return self.jump_url(user_id)
 
     # --- what changes it ---------------------------------------------------------------
@@ -139,19 +150,32 @@ class DmBaskets:
         if self.live(user_id) or self.usable(user_id):
             self._schedule(user_id, "live")
 
+    def link_gone(self, user_id: int) -> None:
+        """The store dropped the basket's link while the basket lives on: redraw with a new one."""
+        if self.live(user_id):
+            self._schedule(user_id, "live")
+
     def cleared(self, user_id: int) -> None:
         if user_id in self._refs:
             self._schedule(user_id, "delete")
 
-    def mark_unavailable(self, user_id: int) -> None:
+    def mark_unavailable(self, user_id: int, exc: BaseException | None = None) -> None:
+        """No DM for a while: 6 h if Discord says the bot can't DM this user, else a short
+        backoff (5xx, network, timeout)."""
+        no_dm = exc is None or (isinstance(exc, discord.Forbidden) and exc.code in NO_DM_CODES)
         self._unavailable.pop(user_id, None)
-        self._unavailable[user_id] = self._now() + UNAVAILABLE_SEC
+        self._unavailable[user_id] = self._now() + (UNAVAILABLE_SEC if no_dm else BACKOFF_SEC)
         if len(self._unavailable) > self.cap:
             self._unavailable.popitem(last=False)
 
     def adopt(self, user_id: int, channel_id: int, message_id: int, record: Any) -> None:
-        """A command in the bot DM answered with the basket message itself: it is the live one."""
-        if not self.enabled or user_id in self._refs:
+        """A command in the bot DM answered with the basket message itself: it is the live one.
+        If another one appeared meanwhile (an add while this answer was being sent), this one
+        is turned into "expired" instead, so the user never has two."""
+        if not self.enabled:
+            return
+        if user_id in self._refs:
+            self._spawn(self._expire_message(channel_id, message_id))
             return
         self._unavailable.pop(user_id, None)  # the bot can post there after all
         ref = self._new(user_id)
@@ -170,12 +194,14 @@ class DmBaskets:
         if ref is not None and ref.message_id is None:
             return False
         if ref is None or ref.message_id != message_id:
+            stale = list(ref.stale) if ref is not None else []
             if ref is not None and ref.channel_id is not None and ref.message_id is not None:
-                self._spawn(self._expire_message(ref.channel_id, ref.message_id))
-                self._refs.pop(user_id, None)
+                # Expired by this user's editor, after any edit of it still in flight.
+                stale.append((ref.channel_id, ref.message_id))
+            self._refs.pop(user_id, None)
             self._unavailable.pop(user_id, None)
             ref = self._new(user_id)
-            ref.channel_id, ref.message_id = channel_id, message_id
+            ref.channel_id, ref.message_id, ref.stale = channel_id, message_id, stale
             ref.posted.set()
         self._schedule(user_id, "live")
         return True
@@ -189,11 +215,15 @@ class DmBaskets:
     # --- expiry ------------------------------------------------------------------------
 
     def tick(self) -> None:
-        """Expire messages whose basket or link has run out (called every TICK_SEC)."""
+        """Expire messages whose basket has run out, redraw those whose link has, and retry
+        failed deletes/expiry edits (called every TICK_SEC)."""
         store = self.client.store
         now = self._now()
         for user_id, ref in list(self._refs.items()):
             if ref.message_id is None or ref.due_at is None or ref.due_at > now or user_id in self._tasks:
+                continue
+            if ref.retry is not None:
+                self._schedule(user_id, ref.retry)
                 continue
             basket = store.basket(user_id)
             if basket is None or not basket.entries:
@@ -201,7 +231,7 @@ class DmBaskets:
             elif basket.link_id != ref.link_id:
                 self._schedule(user_id, "live")  # an edit failed earlier: redraw
             elif ref.link_id is not None and store.link_by_id(ref.link_id, user_id) is None:
-                self._schedule(user_id, "expire")  # the link ran out before the basket
+                self._schedule(user_id, "live")  # the link ran out before the basket: a fresh one
             else:
                 ref.due_at = self._due(user_id, ref.link_id)
 
@@ -229,8 +259,12 @@ class DmBaskets:
     def _new(self, user_id: int) -> _Ref:
         ref = self._refs[user_id] = _Ref()
         while len(self._refs) > self.cap:
-            _, old = self._refs.popitem(last=False)  # its message just goes stale
+            _, old = self._refs.popitem(last=False)
             old.posted.set()
+            # Don't leave its names and thumbnails behind (one edit per eviction; a message still
+            # being posted is expired by _post itself).
+            if old.channel_id is not None and old.message_id is not None:
+                self._spawn(self._expire_message(old.channel_id, old.message_id))
         return ref
 
     def _drop(self, user_id: int, ref: _Ref) -> None:
@@ -242,6 +276,7 @@ class DmBaskets:
         """The message is gone (deleted, expired, unknown): forget it, unless an add is already
         waiting, which then posts a new one."""
         ref.message_id = ref.link_id = ref.due_at = None
+        ref.retry, ref.failures = None, 0
         ref.posted = asyncio.Event()
         if not (ref.dirty and ref.want == "live"):
             self._drop(user_id, ref)
@@ -254,7 +289,7 @@ class DmBaskets:
             ref = self._new(user_id)
         else:
             self._refs.move_to_end(user_id)
-        ref.want, ref.dirty = want, True
+        ref.want, ref.dirty, ref.retry = want, True, None
         if user_id not in self._tasks:
             self._tasks[user_id] = asyncio.create_task(self._run(user_id))
 
@@ -283,25 +318,44 @@ class DmBaskets:
     def _shown(self, user_id: int, ref: _Ref, record: Any) -> None:
         ref.link_id = record.link_id if record is not None else None
         ref.due_at = self._due(user_id, ref.link_id)
+        ref.failures = 0
 
     async def _apply(self, user_id: int, ref: _Ref) -> None:
+        while ref.stale:  # old copies replaced by take_over(), after their in-flight edits
+            await self._expire_message(*ref.stale.pop())
         # Rendering mints the basket link, so it happens here, in the one editor of this user.
         rendered = views.dm_basket_view(self.client, user_id) if ref.want == "live" else None
         channel_id, message_id = ref.channel_id, ref.message_id
         if rendered is None:  # cleared, expired, or the basket went meanwhile
-            if channel_id is not None and message_id is not None:
-                if ref.want == "delete":
-                    try:
-                        await self._channel(channel_id).get_partial_message(message_id).delete()
-                    except NET_ERRORS as exc:
-                        self._failed("delete", exc)
-                else:
-                    await self._expire_message(channel_id, message_id)
-            self._gone(user_id, ref)
+            if channel_id is None or message_id is None or await self._remove(ref, channel_id, message_id):
+                self._gone(user_id, ref)
+            else:
+                self._retry_later(user_id, ref)
         elif channel_id is None or message_id is None:
             await self._post(user_id, ref, *rendered)
         else:
             await self._edit(user_id, ref, channel_id, message_id, *rendered)
+
+    async def _remove(self, ref: _Ref, channel_id: int, message_id: int) -> bool:
+        """Delete (on clear) or expire the message. False: a network error left it as it was."""
+        if ref.want == "delete":
+            try:
+                await self._channel(channel_id).get_partial_message(message_id).delete()
+                return True
+            except discord.NotFound:
+                return True
+            except NET_ERRORS as exc:
+                self._failed("delete", exc)  # then at least strip it
+        return await self._expire_message(channel_id, message_id)
+
+    def _retry_later(self, user_id: int, ref: _Ref) -> None:
+        ref.failures += 1
+        if ref.failures > MAX_RETRIES:
+            log.info("DM basket: giving up on a message after %d attempts", ref.failures)
+            self._drop(user_id, ref)
+            return
+        ref.retry = ref.want
+        ref.due_at = self._now() + TICK_SEC
 
     async def _post(self, user_id: int, ref: _Ref, view: discord.ui.LayoutView, record: Any) -> None:
         try:
@@ -312,7 +366,7 @@ class DmBaskets:
             message = await self._channel(ref.channel_id).send(view=view, silent=True)
         except NET_ERRORS as exc:
             self._failed("send", exc)
-            self.mark_unavailable(user_id)
+            self.mark_unavailable(user_id, exc)
             self._drop(user_id, ref)
             return
         ref.message_id = message.id
@@ -335,10 +389,13 @@ class DmBaskets:
         try:
             await self._channel(channel_id).get_partial_message(message_id).edit(view=view)
         except discord.NotFound:
-            self._gone(user_id, ref)  # the user deleted it: the next add posts a new one
+            # The user deleted it: post this very change anew (toasts wait for the new jump).
+            ref.message_id = ref.link_id = ref.due_at = None
+            ref.posted = asyncio.Event()
+            await self._post(user_id, ref, view, record)
         except discord.Forbidden as exc:
             self._failed("edit", exc)
-            self.mark_unavailable(user_id)
+            self.mark_unavailable(user_id, exc)
             self._drop(user_id, ref)
         except NET_ERRORS as exc:
             # The message keeps its old (now revoked) link; the tick redraws it in a minute.
@@ -347,11 +404,16 @@ class DmBaskets:
         else:
             self._shown(user_id, ref, record)
 
-    async def _expire_message(self, channel_id: int, message_id: int) -> None:
+    async def _expire_message(self, channel_id: int, message_id: int) -> bool:
+        """Turn a message into "Basket expired". False: a network error, worth retrying."""
         try:
             await self._channel(channel_id).get_partial_message(message_id).edit(view=views.dm_expired_view())
+        except (discord.NotFound, discord.Forbidden):
+            return True  # gone, or nothing the bot can do about it any more
         except NET_ERRORS as exc:
             self._failed("expire", exc)
+            return False
+        return True
 
     async def _scan(self, user_id: int, channel_id: int, keep: int | None) -> None:
         """Once per user per process: turn the bot's old basket messages in the DM (from before
@@ -370,12 +432,14 @@ class DmBaskets:
         except NET_ERRORS as exc:
             self._failed("scan", exc)
 
-    def _spawn(self, coro: Coroutine[Any, Any, None]) -> None:
+    def _spawn(self, coro: Coroutine[Any, Any, Any]) -> None:
         task = asyncio.create_task(coro)
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
     @staticmethod
     def _failed(what: str, exc: BaseException) -> None:
-        # Only the error type and Discord's code (50007: blocked, 50278: no way to DM them).
-        log.info("DM basket %s failed: %s %s", what, type(exc).__name__, error_code(exc) or "")
+        # Only the error type and Discord's code (50007: blocked, 50278: no way to DM them). A 400
+        # means a payload the bot built is wrong: that's our bug, so it's a warning.
+        level = logging.WARNING if getattr(exc, "status", None) == 400 else logging.INFO
+        log.log(level, "DM basket %s failed: %s %s", what, type(exc).__name__, error_code(exc) or "")
