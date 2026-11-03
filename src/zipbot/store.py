@@ -107,6 +107,9 @@ class Store:
         self._links: OrderedDict[str, LinkRecord] = OrderedDict()  # token hash → record, oldest first
         self._items = 0  # sum of len(record.items) over _links
         self._baskets: dict[int, Basket] = {}
+        # Called with the user id when a live basket's link goes (it ran out, or anything but a
+        # re-mint, clear or basket expiry dropped it): the DM basket message then redraws.
+        self.on_basket_link_gone: Callable[[int], None] | None = None
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Store:
@@ -139,9 +142,13 @@ class Store:
         mine = [h for h, r in self._links.items() if r.owner_id == owner_id]  # oldest first
         held = sum(len(self._links[h].items) for h in mine)
         budget = max(MAX_ITEMS_PER_USER, 2 * self.max_files_per_link)  # always fits link + basket
+        # The basket link is never evicted: the DM basket message shows it for the basket's whole
+        # life. The rest always makes room (at least 2 links, budget for two full ones).
+        b = self._baskets.get(owner_id)
+        pinned = b.link_id if b is not None else None
         evict: list[str] = []
         freed = 0
-        for h in mine:
+        for h in (h for h in mine if self._links[h].link_id != pinned):
             if len(mine) - len(evict) < self.max_active_links_per_user and (
                 held - freed + len(items) <= budget
             ):
@@ -168,7 +175,13 @@ class Store:
         return token, record
 
     def _drop(self, h: str) -> None:
-        self._items -= len(self._links.pop(h).items)
+        record = self._links.pop(h)
+        self._items -= len(record.items)
+        b = self._baskets.get(record.owner_id)
+        if b is not None and b.link_id == record.link_id:
+            b.link_id = None
+            if self.on_basket_link_gone is not None:
+                self.on_basket_link_gone(record.owner_id)
 
     def resolve(self, token: str) -> LinkRecord | None:
         h = token_hash(token)
@@ -258,8 +271,8 @@ class Store:
         if not mint:
             raise LinkError("the basket link is shown elsewhere")
         if b.link_id:
-            self.revoke(b.link_id, user_id)
-            b.link_id = None
+            old, b.link_id = b.link_id, None  # a re-mint: nobody needs telling
+            self.revoke(old, user_id)
         token, record = self.create_link(user_id, b.items())
         b.link_id, b.link_version = record.link_id, b.version
         return token, record
@@ -274,12 +287,13 @@ class Store:
 
     def sweep(self) -> int:
         now = self.clock()
-        dead = [h for h, r in self._links.items() if r.expires_at <= now]
-        for h in dead:
-            self._drop(h)
+        # Baskets first: a basket expiring with its link is not "the link went, redraw".
         stale = [u for u, b in self._baskets.items() if b.touched_at + self.basket_ttl_sec <= now]
         for u in stale:
             self._expire_basket(u)
+        dead = [h for h, r in self._links.items() if r.expires_at <= now]
+        for h in dead:
+            self._drop(h)
         return len(dead) + len(stale)
 
     def __len__(self) -> int:

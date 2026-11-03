@@ -288,3 +288,33 @@ def test_basket_link_without_minting(store: Store) -> None:
     with pytest.raises(LinkError):
         store.basket_link(7, None, mint=False)
     assert store.resolve(token) is record  # and the old one is not revoked
+
+
+def test_basket_link_is_never_evicted(store: Store) -> None:
+    store.add_to_basket(7, "m1", [item()])
+    token, _ = store.basket_link(7)
+    for _ in range(5):  # max_active_links_per_user=2: each new link evicts the oldest other one
+        store.create_link(7, [item()])
+    assert store.resolve(token) is not None
+    assert store.active_links(7) == 2
+
+
+def test_basket_link_gone_is_reported(store: Store, clock: Clock) -> None:
+    gone: list[int] = []
+    store.on_basket_link_gone = gone.append
+    store.add_to_basket(7, "m1", [item()])
+    store.basket_link(7)
+    store.add_to_basket(7, "m2", [item()])
+    store.basket_link(7)  # a re-mint: not reported
+    clock.t += 1800
+    store.add_to_basket(7, "m1", [item()])  # a duplicate keeps the basket alive
+    clock.t += 1800
+    store.sweep()  # the link ran out, the basket didn't
+    assert gone == [7]
+    store.basket_link(7)
+    store.clear_basket(7)  # cleared, or the basket expiring: not reported either
+    store.add_to_basket(8, "m1", [item()])
+    store.basket_link(8)
+    clock.t += 3600
+    store.sweep()
+    assert gone == [7]
