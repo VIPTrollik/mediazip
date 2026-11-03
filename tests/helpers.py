@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from types import SimpleNamespace
+from typing import Any, cast
+
+import discord
 
 from zipbot.media import MediaItem
 
@@ -34,3 +37,19 @@ def item(name: str = "a.jpg", *, source: int = 0, ctype: str | None = "image/jpe
     }
     values.update(kw)
     return MediaItem(**values)
+
+
+def http_error(cls: type[discord.HTTPException], status: int, code: int) -> discord.HTTPException:
+    """An API error as discord.py raises it (status and JSON code)."""
+    response = cast(Any, SimpleNamespace(status=status, reason="x"))
+    return cls(response, {"code": code, "message": "x"})
+
+
+def forbidden(code: int = 50278) -> discord.HTTPException:
+    """403: 50278 the bot can't DM this user (no install, no shared server), 50007 blocked."""
+    return http_error(discord.Forbidden, 403, code)
+
+
+def not_found(code: int = 10008) -> discord.HTTPException:
+    """404 / 10008 Unknown Message."""
+    return http_error(discord.NotFound, 404, code)

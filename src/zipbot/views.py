@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import itertools
+import logging
 import mimetypes
 import re
 import time
@@ -20,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Protocol, cast
 
+import aiohttp
 import discord
 from discord import app_commands
 
@@ -27,6 +29,8 @@ from zipbot.config import Settings
 from zipbot.contract import thumbnail
 from zipbot.media import FILE_KIND, MediaItem, is_allowed_url
 from zipbot.store import AddResult, Basket, LinkError, LinkRecord, Store
+
+log = logging.getLogger(__name__)
 
 LINK_ID = r"(?P<link_id>[A-Za-z0-9_-]{6,32})"
 
@@ -54,6 +58,8 @@ ID_FILES, ID_ZIP, ID_BASKET = 901, 902, 903
 
 PANEL_TOKEN_SEC = 14 * 60  # an interaction token can edit/delete its message for 15 min
 MAX_PANELS = 1_000  # each entry holds an Interaction (a few KB of payload)
+# What a background call to Discord can raise besides an API error (TimeoutError is an OSError).
+NET_ERRORS = (discord.HTTPException, aiohttp.ClientError, TimeoutError, OSError)
 
 COOLDOWN_TEXT = "You're going a bit fast — try again in {:.0f} s."
 REVOKED = (
@@ -64,6 +70,7 @@ LINK_GONE = "This link has already expired or was revoked."
 LINK_EXPIRED = "This link has expired — run the command again."
 BASKET_EMPTY = "🧺 Your basket is empty — use **Apps → Add to ZIP basket** on a message first."
 BASKET_CLEARED = "🧺 Basket cleared."
+PANEL_GONE = "That panel was just replaced — use your newer one."
 
 # A panel, or a short notice that leaves the user's live panel alone.
 Reply = discord.ui.LayoutView | str
@@ -127,7 +134,8 @@ class Panels:
             self._delete(interaction, message_id)
             return
         self._set(user_id, _Panel(interaction, message_id, self.clock(), ticket))
-        if live is not None and live.message_id != message_id:
+        # A new send is always a new message, so an unknown id (None) still means "the old one".
+        if live is not None and (live.message_id is None or live.message_id != message_id):
             self._delete(live.interaction, live.message_id)
 
     def clicked(self, user_id: int, interaction: discord.Interaction, message_id: int, ticket: int) -> None:
@@ -163,8 +171,12 @@ class Panels:
 
     @staticmethod
     async def _delete_now(interaction: discord.Interaction) -> None:
-        with contextlib.suppress(discord.HTTPException):  # dismissed, already gone, token expired
+        try:
             await interaction.delete_original_response()
+        except discord.HTTPException:
+            pass  # dismissed, already gone, token expired
+        except NET_ERRORS as exc:
+            log.info("panel delete failed: %s", type(exc).__name__)
 
     def __len__(self) -> int:
         return len(self._live)
@@ -192,7 +204,12 @@ async def update(interaction: discord.Interaction, reply: Reply) -> None:
         return
     panels = app(interaction).panels
     ticket = panels.ticket()
-    await interaction.response.edit_message(view=reply)
+    try:
+        await interaction.response.edit_message(view=reply)
+    except discord.NotFound:  # the panel was deleted (replaced by a newer one) just now
+        with contextlib.suppress(discord.HTTPException):
+            await interaction.response.send_message(PANEL_GONE, ephemeral=True)
+        return
     if message.flags.ephemeral:  # DM replies are ordinary messages and are never deleted
         panels.clicked(interaction.user.id, interaction, message.id, ticket)
 

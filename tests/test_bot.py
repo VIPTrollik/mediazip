@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+import aiohttp
 import discord
 import pytest
 from discord.components import _component_factory
 
-from helpers import EX, fixture, item, resolved_message
+from helpers import EX, fixture, item, not_found, resolved_message
 from zipbot import handlers, views
 from zipbot.bot import EXTENSIONS, ZipBot, intents
 from zipbot.config import Settings
@@ -25,6 +27,7 @@ from zipbot.views import (
     ID_ZIP,
     LINK_EXPIRED,
     LINK_GONE,
+    PANEL_GONE,
     PANEL_TOKEN_SEC,
     REVOKED,
     AddLinkToBasketButton,
@@ -824,3 +827,41 @@ async def test_sync_only_when_commands_changed(
     await bot.sync_commands()
     assert bot.tree.sync.await_count == (1 if change else 0)
     await bot.close()
+
+
+# --- live-panel edge cases -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("error", [aiohttp.ClientConnectionError("reset"), TimeoutError(), OSError("x")])
+async def test_delete_survives_network_errors(
+    state: Any, error: BaseException, caplog: pytest.LogCaptureFixture
+) -> None:
+    panels = Panels()
+    old = interaction(state)
+    old.delete_original_response.side_effect = error
+    panels.opened(7, old, 1, panels.ticket())
+    panels.opened(7, interaction(state), 2, panels.ticket())
+    with caplog.at_level(logging.INFO, logger="zipbot.views"):
+        await drain()
+    old.delete_original_response.assert_awaited_once()
+    assert not panels._tasks  # finished, no "Task exception was never retrieved"
+    assert caplog.messages == [f"panel delete failed: {type(error).__name__}"]  # the type only
+
+
+async def test_unknown_message_ids_still_replace_the_panel(state: Any) -> None:
+    panels = Panels()
+    first, second = interaction(state), interaction(state)
+    panels.opened(7, first, None, panels.ticket())
+    panels.opened(7, second, None, panels.ticket())  # both ids unknown: still two messages
+    await drain()
+    first.delete_original_response.assert_awaited_once()
+    second.delete_original_response.assert_not_awaited()
+
+
+async def test_click_on_a_deleted_panel_is_acknowledged(state: Any) -> None:
+    view, record = link_of(state)
+    inter = interaction(state, message=message_of(view))
+    inter.response.edit_message.side_effect = not_found()  # the panel's delete landed first
+    await RevokeButton(record.link_id).callback(inter)  # no "This interaction failed"
+    inter.response.send_message.assert_awaited_once_with(PANEL_GONE, ephemeral=True)
+    assert len(state.panels) == 0
