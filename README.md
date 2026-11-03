@@ -143,6 +143,9 @@ If the token leaks, choose **Reset Token** in the Developer Portal, update `.env
 
 ## Development
 
+Vibecoded with Opus 5.5, but by an experienced programmer following best practices and including
+a full test harness.
+
 ```sh
 python -m venv .venv
 .venv/bin/python -m pip install -e ".[dev]"        # on Windows: .venv/Scripts/python
