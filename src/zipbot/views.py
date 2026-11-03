@@ -794,7 +794,7 @@ class AddLinkToBasketButton(
         super().__init__(
             discord.ui.Button(
                 label="Add to ZIP",
-                emoji="➕",
+                emoji="📥",  # not the heavy plus: Discord draws it dark grey, invisible on a dark button
                 style=discord.ButtonStyle.secondary,
                 custom_id=f"zb:basket:{link_id}",
             )

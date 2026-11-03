@@ -45,12 +45,27 @@
 .step p { margin: 0; font-size: var(--text-sm); color: var(--muted); }
 .step p b { color: var(--fg); font-weight: 600; }
 
+/* ---- Screenshots ---------------------------------------------------------------- */
+.shots { margin-top: var(--space-6); }
+.shots__grid { display: grid; gap: var(--space-4); align-items: start; }
+@media (min-width: 840px) {
+  /* Column widths in proportion to each image's aspect ratio (611/629, 978/766) give both the same height. */
+  .shots__grid { grid-template-columns: minmax(0, 0.971fr) minmax(0, 1.277fr); }
+}
+.shot { margin: 0; max-width: 560px; }
+@media (min-width: 840px) { .shot { max-width: none; } } /* a cap would break the equal heights */
+.shot img {
+  display: block; width: 100%; height: auto;
+  border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--surface-2);
+}
+.shot figcaption { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--muted); }
+
 .landing__note { margin-top: var(--space-5); }
 .landing__note a { color: var(--link); }
 .repo-link { display: inline-flex; align-items: center; gap: var(--space-1); }
 @media (pointer: coarse) { .repo-link { min-height: var(--control-md); } }
 
-main.landing { padding-bottom: var(--space-6); } /* keeps the page to one 1280×800 screen */
+main.landing { padding-bottom: var(--space-6); }
 
 /* ---- Illustration (inline SVG in index.html) ------------------------------------ */
 .art {

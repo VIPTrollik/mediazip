@@ -11,6 +11,10 @@
   <a href="https://mediazip.download/install"><b>Add MediaZip to Discord</b></a>
 </p>
 
+<p align="center">
+  <img src="docs/media/demo.gif" width="640" alt="Right-click a message, choose Apps then Download media, get a private reply, then save every file or one ZIP from the download page">
+</p>
+
 ---
 
 ## How it works

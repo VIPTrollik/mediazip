@@ -35,7 +35,7 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-zipbot = ["web/static/*", "web/static/brand/*"]
+zipbot = ["web/static/*", "web/static/brand/*", "web/static/media/*"]
 
 [tool.ruff]
 line-length = 110
