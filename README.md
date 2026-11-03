@@ -20,7 +20,8 @@ DM, including ones where the bot isn't a member.
 
 - **Right-click (or long-press) a message → Apps → Download media.** Only you see the reply.
   It shows thumbnails of the files and two buttons: **Download all** and **Download ZIP**.
-  A new reply replaces your previous one.
+  When there are more files than thumbnails (Discord shows up to 10), a **View all** button
+  opens the download page without starting a download. A new reply replaces your previous one.
 - **Apps → Add to ZIP** collects several messages (up to 10 by default) into one ZIP with a
   folder per message. Your ZIP is kept as a single message in your DM with the bot, and that
   message is updated each time you add something. Its **Download your ZIP** button downloads
