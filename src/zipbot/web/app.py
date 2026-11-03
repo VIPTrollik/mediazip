@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import html
 import logging
+import mimetypes
 import re
 import time
 from collections import OrderedDict, deque
@@ -20,6 +21,8 @@ from zipbot.contract import resolve_body
 from zipbot.store import Store
 
 STATIC = Path(__file__).parent / "static"
+# The slim container image has no /etc/mime.types, and with nosniff a mislabelled image may not render.
+mimetypes.add_type("image/webp", ".webp")
 # The source code link on the landing, privacy and terms pages (their `{{REPO_URL}}`).
 REPO_URL = "https://github.com/VIPTrollik/mediazip"
 FAVICON = STATIC / "brand" / "favicon.ico"

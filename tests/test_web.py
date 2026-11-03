@@ -611,6 +611,9 @@ async def test_pages_carry_the_icon_and_favicons(client: Any, path: str) -> None
         ("/static/brand/apple-touch-icon.png", "image/png"),
         ("/static/brand/mediazip-icon.svg", "image/svg+xml"),
         *((f"/static/brand/mediazip-icon-{size}.png", "image/png") for size in (128, 256, 512, 1024)),
+        # registered in app.py: the container's mimetypes has no .webp
+        ("/static/media/download-media.webp", "image/webp"),
+        ("/static/media/download-page.webp", "image/webp"),
     ],
 )
 async def test_brand_assets_served(client: Any, path: str, ctype: str | None) -> None:
