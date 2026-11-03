@@ -37,6 +37,7 @@ from zipbot.views import (
     DYNAMIC_ITEMS,
     ID_BASKET,
     ID_JUMP,
+    ID_VIEW,
     AddLinkToBasketButton,
     BasketClearButton,
     BasketRefreshButton,
@@ -692,6 +693,19 @@ async def test_refresh_on_an_old_copy_takes_over(env: Any) -> None:
     await settle(env)
     assert env.dm_baskets.is_live_message(7, first.id)
     assert_expired(second.view)  # one live message per user
+
+
+async def test_dm_message_views_all_when_files_are_hidden(env: Any) -> None:
+    env.store.add_to_basket(7, "c/1", [item(f"p{i}.jpg") for i in range(12)])
+    rendered = views.dm_basket_view(env, 7)
+    assert rendered
+    view, _ = rendered
+    rows = [c for c in flat(view) if c["type"] == 1]
+    assert len(rows) == 1 and len(rows[0]["components"]) == 5  # a row's limit
+    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Download your ZIP", "View all (12)"]
+    assert custom_ids(view) == ["zb:basketclear", "zb:dmbasket:refresh"]
+    url = next(c["url"] for c in link_buttons(view) if c.get("id") == ID_VIEW)
+    assert url.endswith(tuple(tokens(view))) and "-# 🖼️ +2 more images and videos" in text(view)
 
 
 async def test_refresh_on_the_live_message_redraws_it(env: Any) -> None:

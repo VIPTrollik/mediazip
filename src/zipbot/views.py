@@ -2,7 +2,8 @@
 
 Every reply that carries a link is one Components V2 panel: a summary line, a strip of
 thumbnails, the link buttons (`#<token>.files`, `#<token>.zip`; each opens the page and
-starts that action right away) and a row for the basket ("your ZIP" to users). A user has
+starts that action right away; plus "View all (N)", the page itself, when some files don't fit
+in the panel) and a row for the basket ("your ZIP" to users). A user has
 one live ephemeral panel: a new one deletes the previous one (`Panels`), and a button edits
 the panel it sits on.
 """
@@ -58,7 +59,8 @@ NAMES_MAX = 5  # other files are listed by name, then "+N more"
 NAME_CHARS = 40
 # Ids of a panel's own link buttons. A click re-renders the panel and takes their URLs back
 # from the message, because the store keeps only token hashes. Far above Discord's auto ids.
-ID_FILES, ID_ZIP, ID_BASKET, ID_JUMP = 901, 902, 903, 904
+# ID_VIEW's URL is files_url without its action, so it never needs to be read back.
+ID_FILES, ID_ZIP, ID_BASKET, ID_JUMP, ID_VIEW = 901, 902, 903, 904, 905
 
 PANEL_TOKEN_SEC = 14 * 60  # an interaction token can edit/delete its message for 15 min
 MAX_PANELS = 1_000  # each entry holds an Interaction (a few KB of payload)
@@ -444,6 +446,11 @@ class PanelLink:
     def new(cls, base_url: str, token: str, record: LinkRecord) -> PanelLink:
         return cls(record, page_url(base_url, token, "files"), page_url(base_url, token, "zip"))
 
+    @property
+    def view_url(self) -> str:
+        """The page without an action: the grid of every file, nothing starts by itself."""
+        return self.files_url.removesuffix(".files")
+
 
 def row(*items: discord.ui.Item[Any]) -> discord.ui.ActionRow[Any]:
     action_row: discord.ui.ActionRow[Any] = discord.ui.ActionRow()
@@ -455,9 +462,18 @@ def row(*items: discord.ui.Item[Any]) -> discord.ui.ActionRow[Any]:
 def link_row(
     link: PanelLink, *extra: discord.ui.Item[Any], zip_label: str = "Download ZIP"
 ) -> discord.ui.ActionRow[Any]:
+    """Download all, Download ZIP, then View all (N) if the panel can't show every file, then
+    `extra` (at most two: a row holds five buttons)."""
+    label = f"View all ({len(link.record.items)})"
+    view_all = (
+        []
+        if shows_all(link.record)
+        else [discord.ui.Button(label=label, emoji="🖼️", url=link.view_url, id=ID_VIEW)]
+    )
     return row(
         discord.ui.Button(label="Download all", emoji="⬇️", url=link.files_url, id=ID_FILES),
         discord.ui.Button(label=zip_label, emoji="🗜️", url=link.zip_url, id=ID_ZIP),
+        *view_all,
         *extra,
     )
 
@@ -477,10 +493,16 @@ def in_gallery(item: MediaItem) -> bool:
     return ext in GALLERY_EXTS or (not ext and item.fallback_kind != FILE_KIND)
 
 
-def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
-    """Thumbnails of the first 10 images/videos, then the names of the other files."""
+@dataclass(frozen=True, slots=True)
+class _Preview:
+    gallery: list[discord.MediaGalleryItem]
+    hidden: int  # media beyond the gallery's 10
+    others: list[str]  # names of the files that aren't tiles
+
+
+def _preview(record: LinkRecord) -> _Preview:
     gallery: list[discord.MediaGalleryItem] = []
-    hidden = 0  # media beyond the gallery's 10
+    hidden = 0
     others: list[str] = []
     for item, name in zip(record.items, record.names, strict=True):
         thumb = thumbnail(item)
@@ -491,6 +513,19 @@ def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
             gallery.append(discord.MediaGalleryItem(thumb, spoiler=item.filename.startswith("SPOILER_")))
         else:
             hidden += 1
+    return _Preview(gallery, hidden, others)
+
+
+def shows_all(record: LinkRecord) -> bool:
+    """Whether the panel shows every file, as a tile or by name (nothing behind a "+N more")."""
+    p = _preview(record)
+    return not p.hidden and len(p.others) <= NAMES_MAX
+
+
+def previews(record: LinkRecord) -> list[discord.ui.Item[Any]]:
+    """Thumbnails of the first 10 images/videos, then the names of the other files."""
+    p = _preview(record)
+    gallery, hidden, others = p.gallery, p.hidden, p.others
     parts: list[discord.ui.Item[Any]] = []
     if gallery:
         parts.append(discord.ui.MediaGallery(*gallery))
