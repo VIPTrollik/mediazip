@@ -27,27 +27,38 @@ CDN_HOSTS = (
     "https://images-ext-2.discordapp.net",
 )
 _cdn = " ".join(CDN_HOSTS)
-CSP = (
-    f"default-src 'self'; img-src 'self' blob: {_cdn}; media-src 'self' blob: {_cdn}; "
-    f"connect-src 'self' {_cdn}; script-src 'self'; style-src 'self'; "
-    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
-)
+
+
+def build_csp(*, script: str = "", connect: str = "", img: str = "") -> str:
+    """The one CSP template: every response's policy, plus extra sources for the analytics pages."""
+    directives = {
+        "default-src": "'self'",
+        "img-src": f"'self' blob: {_cdn} {img}",
+        "media-src": f"'self' blob: {_cdn}",
+        "connect-src": f"'self' {_cdn} {connect}",
+        "script-src": f"'self' {script}",
+        "style-src": "'self'",
+        "frame-ancestors": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'",
+    }
+    return "; ".join(f"{name} {' '.join(sources.split())}" for name, sources in directives.items())
+
+
+CSP = build_csp()
 # Google Analytics (GA_MEASUREMENT_ID) widens the CSP for "/", "/privacy" and "/terms" only, never for
 # /d (the link token is in its URL fragment) or the API. Hosts from Google's CSP guide, "Google
 # Analytics" without Ads features: https://developers.google.com/tag-platform/security/guides/csp
-# (checked 2026-11-03; it lists script-src-elem www.googletagmanager.com, img-src
-# www.googletagmanager.com *.google-analytics.com, connect-src www.googletagmanager.com
-# *.google-analytics.com *.google.com). We add *.analytics.google.com (GA4's regional collection
-# endpoints) and leave out *.google.com: with consent denied and no Google Signals or Ads
-# features nothing is sent there, and a blocked request only costs a CSP report.
+# (checked 2026-11-03: script-src-elem www.googletagmanager.com; img-src www.googletagmanager.com
+# *.google-analytics.com; connect-src www.googletagmanager.com *.google-analytics.com
+# *.google.com), plus *.analytics.google.com for GA4's regional collection endpoints.
 GA_SCRIPT = "https://www.googletagmanager.com"
-GA_CONNECT = "https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com"
-GA_IMG = "https://*.google-analytics.com https://www.googletagmanager.com"
-ANALYTICS_CSP = (
-    f"default-src 'self'; img-src 'self' blob: {_cdn} {GA_IMG}; media-src 'self' blob: {_cdn}; "
-    f"connect-src 'self' {_cdn} {GA_CONNECT}; script-src 'self' {GA_SCRIPT}; style-src 'self'; "
-    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+GA_CONNECT = (
+    "https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com "
+    "https://*.google.com"
 )
+GA_IMG = "https://*.google-analytics.com https://www.googletagmanager.com"
+ANALYTICS_CSP = build_csp(script=GA_SCRIPT, connect=GA_CONNECT, img=GA_IMG)
 ANALYTICS_PLACEHOLDER = "<!--analytics-->"
 ANALYTICS_PAGES = {"/": "index.html", "/privacy": "privacy.html", "/terms": "terms.html"}
 SECURITY_HEADERS = {
@@ -206,12 +217,23 @@ def analytics_tags(measurement_id: str | None) -> str:
     )
 
 
+def render_analytics(source: str, measurement_id: str | None) -> str:
+    """Fill `<!--analytics-->` and keep the `<!--if-analytics-->…<!--/if-analytics-->` or the
+    `<!--if-no-analytics-->…<!--/if-no-analytics-->` blocks (the privacy page's disclosure)."""
+    on, off = "if-analytics", "if-no-analytics"
+    keep, drop = (on, off) if measurement_id else (off, on)
+    source = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->\n?", "", source, flags=re.S)
+    source = re.sub(rf"<!--/?{keep}-->\n?", "", source)
+    return source.replace(ANALYTICS_PLACEHOLDER, analytics_tags(measurement_id))
+
+
 def _analytics_page(name: str, measurement_id: str | None) -> Handler:
-    """A page that may carry Google Analytics, rendered once at startup."""
+    """A page that may carry Google Analytics, rendered once at startup. Served without
+    ETag/Last-Modified; the middleware's Cache-Control: no-cache applies."""
     source = (STATIC / name).read_text(encoding="utf-8")
     if ANALYTICS_PLACEHOLDER not in source:
         raise RuntimeError(f"{name} has no {ANALYTICS_PLACEHOLDER} placeholder")
-    body = source.replace(ANALYTICS_PLACEHOLDER, analytics_tags(measurement_id)).encode()
+    body = render_analytics(source, measurement_id).encode()
 
     async def handler(_: web.Request) -> web.Response:
         response = web.Response(body=body, content_type="text/html", charset="utf-8")

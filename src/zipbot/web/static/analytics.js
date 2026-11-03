@@ -18,7 +18,8 @@
   });
   gtag("js", new Date());
   // page_location without query or fragment, so nothing after the path ever reaches Google.
-  gtag("config", id, { anonymize_ip: true, page_location: location.origin + location.pathname });
+  // (GA4 never stores IP addresses, so there is no anonymize_ip to set.)
+  gtag("config", id, { page_location: location.origin + location.pathname });
 
   const script = document.createElement("script");
   script.async = true;

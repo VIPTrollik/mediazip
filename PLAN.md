@@ -115,7 +115,7 @@ One long-lived message per user in the bot DM holds the basket, so it survives A
 
 - **One Python 3.12 process**: discord.py bot (gateway) + aiohttp.web server in the same event loop, sharing an in-memory store. Links/baskets are lost on restart (acceptable: short-lived by design).
 - No Interactions Endpoint URL (gateway only).
-- Frontend: static HTML + vanilla JS + vendored `client-zip` (no build step, no third-party script hosts).
+- Frontend: static HTML + vanilla JS + vendored `client-zip` (no build step). The only third-party script is Google's gtag.js, opt-in (`GA_MEASUREMENT_ID`) and only on `/`, `/privacy`, `/terms` (§6); `/d` never loads one.
 
 ### Data model (in memory)
 
@@ -163,7 +163,7 @@ Bearer links are accepted; the following keeps them safe:
 - **No sensitive logging**: never log tokens, CDN URLs, filenames, or message content — only counts/sizes/durations.
 - **Headers** on all responses: strict CSP (`default-src 'self'; img-src 'self' blob: cdn.discordapp.com media.discordapp.net images-ext-1.discordapp.net images-ext-2.discordapp.net; media-src` same; `connect-src` same hosts; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'`), `X-Content-Type-Options: nosniff`, `X-Robots-Tag: noindex`, `Cache-Control: no-store` on `/api/*`. HSTS set in nginx.
 - **XSS**: all user-derived strings (filenames) rendered via `textContent`, never `innerHTML`.
-- **No third-party scripts**: `client-zip` vendored at a pinned version, checksum recorded in `static/VENDOR.md`.
+- **No third-party scripts on `/d`**: `client-zip` vendored at a pinned version, checksum recorded in `static/VENDOR.md`. The one exception anywhere is cookieless Google Analytics (`GA_MEASUREMENT_ID`, unset by default): `/static/analytics.js` sets Consent Mode v2 to all-denied, then loads gtag.js, on `/`, `/privacy` and `/terms` only. Only those three responses get a CSP widened for Google's hosts; `/d` (token in the fragment), the API and the install page keep the strict one, and the privacy page's analytics section is rendered only when GA is on.
 - **Host allowlist** (§4) — the browser is never pointed at arbitrary external hosts (prevents IP leaks to third parties via embeds).
 - **Rate limiting**: `/api/resolve` per IP in-app (`RESOLVE_RATE_PER_MIN`) + nginx `limit_req`; bot per-user cooldown. Client IP taken from `X-Forwarded-For` only when peer is in `TRUSTED_PROXIES`.
 - **Container hardening**: non-root user, `read_only: true`, `tmpfs: /tmp`, `cap_drop: [ALL]`, `no-new-privileges`, port bound to `127.0.0.1` only, memory limit.

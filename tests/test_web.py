@@ -74,9 +74,10 @@ async def test_copy_is_about_images_and_videos(client: Any, path: str) -> None:
     assert "Download media" in html or path == "/terms"
 
 
-@pytest.mark.parametrize("path", ["/", "/privacy", "/terms"])
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms", "/d", "/install"])
 async def test_pages_carry_the_product_name(client: Any, path: str) -> None:
-    html = await (await client.get(path)).text()
+    html = await (await client.get(path)).text()  # /install: the 503 page (bot not logged in)
+    assert re.search(r"<title>[^<]*MediaZip[^<]*</title>", html)
     assert "MediaZip" in html
     for old in ("Discord media downloader", "basket", "Basket"):
         assert old not in html, old
@@ -468,6 +469,73 @@ async def test_never_on_the_download_page_or_api(ga_client: Any) -> None:
     assert "google" not in resp.headers["Content-Security-Policy"]
 
 
+async def test_privacy_page_discloses_analytics_only_when_on(client: Any, ga_client: Any) -> None:
+    off = await (await client.get("/privacy")).text()
+    on = await (await ga_client.get("/privacy")).text()
+    for html in (off, on):
+        assert "if-analytics" not in html and "if-no-analytics" not in html  # markers removed
+        assert html.count("<h2>Website analytics</h2>") == 1
+    assert "This site uses no analytics, no cookies and no third-party scripts." in off
+    assert "Google" not in off and "Apart from the website analytics" not in off
+    assert "No data is sold or shared with third parties." in off
+    assert "no analytics" not in on
+    for text in (
+        "Art. 6(1)(f) GDPR",
+        "right to object",
+        "possibly in the United",
+        'href="https://tools.google.com/dlpage/gaoptout"',
+        'href="https://policies.google.com/privacy"',
+        "Apart from the website analytics above",
+    ):
+        assert text in on, text
+
+
+def test_render_analytics_blocks() -> None:
+    page = (
+        "a<!--analytics-->b\n"
+        "<!--if-analytics-->\nON\n<!--/if-analytics-->\n"
+        "<!--if-no-analytics-->\nOFF\n<!--/if-no-analytics-->\n"
+        "z"
+    )
+    assert web_app.render_analytics(page, None) == "ab\nOFF\nz"
+    assert web_app.render_analytics(page, GA_ID).startswith('a<meta name="ga-id"')
+    assert web_app.render_analytics(page, GA_ID).endswith("b\nON\nz")
+
+
+@pytest.mark.parametrize("path", GA_PAGES)
+async def test_rendered_pages_revalidate(client: Any, ga_client: Any, path: str) -> None:
+    for c in (client, ga_client):
+        resp = await c.get(path)
+        assert resp.headers["Cache-Control"] == "no-cache"
+        assert "ETag" not in resp.headers and "Last-Modified" not in resp.headers
+
+
+def test_csps_share_one_template() -> None:
+    assert web_app.build_csp() == web_app.CSP
+    strict = dict(d.split(" ", 1) for d in web_app.CSP.split("; "))
+    wide = dict(d.split(" ", 1) for d in web_app.ANALYTICS_CSP.split("; "))
+    assert strict.keys() == wide.keys()
+    for name, sources in strict.items():  # the analytics CSP only adds sources, never drops one
+        assert set(sources.split()) <= set(wide[name].split()), name
+    added = {name: set(wide[name].split()) - set(sources.split()) for name, sources in strict.items()}
+    assert added == {
+        "default-src": set(),
+        "img-src": {"https://*.google-analytics.com", "https://www.googletagmanager.com"},
+        "media-src": set(),
+        "connect-src": {
+            "https://*.google-analytics.com",
+            "https://*.analytics.google.com",
+            "https://www.googletagmanager.com",
+            "https://*.google.com",
+        },
+        "script-src": {"https://www.googletagmanager.com"},
+        "style-src": set(),
+        "frame-ancestors": set(),
+        "base-uri": set(),
+        "form-action": set(),
+    }
+
+
 def test_analytics_script_order_and_page_location() -> None:
     js = (web_app.STATIC / "analytics.js").read_text(encoding="utf-8")
     code = re.sub(r"(?m)(^|\s)//.*$", "", js)  # comments aside (not the https:// URL)
@@ -486,7 +554,6 @@ def test_analytics_script_order_and_page_location() -> None:
     for key in ("analytics_storage", "ad_storage", "ad_user_data", "ad_personalization"):
         assert f'{key}: "denied"' in consent, key
     assert "page_location: location.origin + location.pathname" in code
-    assert "anonymize_ip: true" in code
     for leak in ("location.href", "location.hash", "location.search", "cookie"):
         assert leak not in code, leak
 

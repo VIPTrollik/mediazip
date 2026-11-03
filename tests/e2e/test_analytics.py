@@ -136,7 +136,7 @@ def test_consent_denied_before_config_and_no_fragment(
     ]
     _, measurement_id, params = queue[2]
     assert measurement_id == GA_ID
-    assert params == {"anonymize_ip": True, "page_location": f"{base}{path}"}  # no query, no fragment
+    assert params == {"page_location": f"{base}{path}"}  # no query, no fragment
     assert "secret" not in str(queue) and "utm_source" not in str(queue)
     (loader,) = gtag_requests(google)  # gtag.js was asked for (and aborted): the CSP allows it
     assert parse_qs(urlsplit(loader).query) == {"id": [GA_ID]}
