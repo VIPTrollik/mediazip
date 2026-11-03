@@ -1,26 +1,22 @@
-# Example server block for the zipbot container (MediaZip) behind nginx + certbot.
-# For another host, replace mediazip.download. `certbot --nginx -d mediazip.download` fills in
-# the ssl_certificate lines. The upstream port is HOST_PORT from .env (8090 in production;
-# docker-compose.yml defaults to 8080).
+# Example site for the zipbot container (MediaZip) behind nginx + certbot, included in nginx's
+# http context (e.g. a file in sites-enabled). For another host, replace mediazip.download.
+#
+# It is one plain HTTP server block, so `nginx -t` passes before any certificate exists. Then
+# `sudo certbot --nginx -d mediazip.download` adds `listen 443 ssl`, the certificate lines and
+# the HTTP → HTTPS redirect to this block itself.
+#
+# The upstream port is HOST_PORT from .env (8090 in production; docker-compose.yml defaults
+# to 8080).
 
 limit_req_zone $binary_remote_addr zone=zipbot_api:10m rate=30r/m;
-server_tokens off;  # http context: applies to every server block, incl. the :80 redirect
+server_tokens off;  # http context: applies to every server block, incl. certbot's :80 redirect
 
 server {
     listen 80;
     server_name mediazip.download;
-    location /.well-known/acme-challenge/ { root /var/www/certbot; }
-    location / { return 301 https://$host$request_uri; }
-}
 
-server {
-    listen 443 ssl;
-    http2 on;
-    server_name mediazip.download;
-
-    # ssl_certificate     /etc/letsencrypt/live/mediazip.download/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/mediazip.download/privkey.pem;
-
+    # Browsers ignore HSTS on plain HTTP, so this only takes effect once certbot has made this
+    # block serve HTTPS (certbot keeps it in the block it converts).
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     client_max_body_size 1k;
 

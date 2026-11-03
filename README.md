@@ -66,11 +66,17 @@ sends no CORS headers for documents and similar files (images and videos get
 reports them as failed. Embeds (link previews, GIFs) only ever count as images or videos.
 
 `GA_MEASUREMENT_ID` (default unset: no analytics) turns on Google Analytics 4 for the
-landing, privacy and terms pages only, in cookieless Consent Mode (all storage denied, no
-banner needed). The server then adds a `ga-id` meta tag and `/static/analytics.js` to those
-three pages and widens their CSP for Google's hosts; the download page `/d`, whose URL
-fragment holds the link token, the API and the install page never load it. The privacy page
-already discloses it.
+landing, privacy and terms pages only, in Consent Mode with all storage denied, so it runs
+without cookies (check your own legal requirements, e.g. whether you need a notice or
+banner where you operate). The server then adds a `ga-id` meta tag and
+`/static/analytics.js` to those three pages, widens their CSP for Google's hosts, and shows
+the "Website analytics" section of the privacy page (without the setting, that page says no
+analytics are used). The download page `/d`, whose URL fragment holds the link token, the API
+and the install page never load it.
+
+Expect partial numbers: with consent denied, GA4 gets cookieless pings only, so reports are
+modelled or incomplete (no returning users, little or no attribution), and Realtime may show
+little or nothing. That is the price of not setting cookies, not a fault in the setup.
 
 `TRUSTED_PROXIES` (default `127.0.0.1/32`) lists the peers whose `X-Forwarded-For` header
 is believed, for per-client rate limiting. With nginx on the host the container sees the
@@ -84,11 +90,13 @@ Compose-only settings, read from the same `.env` (or the shell) when `docker com
 
 - `HOST_PORT` (default `8080`): the host port, always bound to `127.0.0.1`. Use e.g. `8090`
   if 8080 is taken, and point nginx there.
-- `COMPOSE_SUBNET` / `COMPOSE_GATEWAY` (defaults `172.30.88.0/24` / `172.30.88.1`): the
+- `ZIPBOT_SUBNET` / `ZIPBOT_GATEWAY` (defaults `172.30.88.0/24` / `172.30.88.1`): the
   network's fixed subnet, for hosts where it overlaps another Docker network ("Pool overlaps
   with other one on this address space"; `docker network inspect $(docker network ls -q)
   --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}}{{end}}'` lists the taken ones).
   Change both together; `TRUSTED_PROXIES` follows the gateway unless you set it yourself.
+  An existing network keeps its old subnet, so run `docker compose down` before changing
+  them, then `docker compose up -d`.
 
 ## 3. Run
 
@@ -120,20 +128,31 @@ The image builds natively on amd64 and arm64 Linux hosts with Docker
    PUBLIC_BASE_URL=https://mediazip.download
    GA_MEASUREMENT_ID=G-Z8VRMRQ3X4
    HOST_PORT=8090
-   # only if 172.30.88.0/24 is already used by another network:
-   # COMPOSE_SUBNET=172.30.89.0/24
-   # COMPOSE_GATEWAY=172.30.89.1
+   # only if 172.30.88.0/24 is already used by another network (`docker compose down` first
+   # if the stack already ran):
+   # ZIPBOT_SUBNET=172.30.89.0/24
+   # ZIPBOT_GATEWAY=172.30.89.1
    ```
 
 3. `sudo docker compose up -d --build`, then `sudo docker compose ps` (healthy) and
    `curl -s http://127.0.0.1:8090/healthz`.
-4. nginx: copy the server blocks from [deploy/nginx.conf.example](deploy/nginx.conf.example)
-   (`server_name mediazip.download`, `proxy_pass http://127.0.0.1:8090`), create
-   `/etc/nginx/zipbot_proxy.conf` as shown at its end, `sudo nginx -t && sudo systemctl reload
-   nginx`, then `sudo certbot --nginx -d mediazip.download`.
-5. Check `https://mediazip.download/healthz`, and in the Developer Portal set the Terms URL
-   `https://mediazip.download/terms` and the Privacy URL `https://mediazip.download/privacy`.
-6. Stop any other copy of the bot (e.g. a local one) once this one is up: both would receive
+4. nginx, HTTP first: write the plain `listen 80` block from
+   [deploy/nginx.conf.example](deploy/nginx.conf.example) (`server_name mediazip.download`,
+   `proxy_pass http://127.0.0.1:8090`) to `/etc/nginx/sites-enabled/mediazip.download` (or wherever the
+   server's sites are included), and create `/etc/nginx/zipbot_proxy.conf` as shown at its end.
+5. `sudo nginx -t && sudo systemctl reload nginx`, and check
+   `curl -s http://mediazip.download/healthz`.
+6. `sudo certbot --nginx -d mediazip.download`: it adds `listen 443 ssl`, the certificate and
+   the HTTP → HTTPS redirect to that block (add `http2 on;` afterwards if you want it), and
+   the HSTS header from the example then takes effect.
+7. Verify: `https://mediazip.download/healthz` → `{"status": "ok"}`, `http://` redirects to
+   `https://`, and in the Developer Portal set the Terms URL `https://mediazip.download/terms`
+   and the Privacy URL `https://mediazip.download/privacy`.
+8. Analytics check: open `https://mediazip.download/` in a fresh browser profile. DevTools →
+   Application → Cookies shows no cookies for the site, and the Console shows no CSP
+   violations; `/d` loads nothing from Google (Network tab). In GA, Realtime or DebugView may
+   show only a few or no hits, as described above.
+9. Stop any other copy of the bot (e.g. a local one) once this one is up: both would receive
    every command and DM, and links made by one don't exist in the other's memory.
 
 ### If the token leaks
