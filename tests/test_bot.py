@@ -25,6 +25,7 @@ from zipbot.views import (
     DYNAMIC_ITEMS,
     ID_BASKET,
     ID_FILES,
+    ID_VIEW,
     ID_ZIP,
     LINK_EXPIRED,
     LINK_GONE,
@@ -275,10 +276,71 @@ def test_panel_stays_within_discord_limits(state: Any) -> None:
     assert rows and all(len(r["components"]) <= 5 for r in rows)
     assert len(gallery(view)) == 10
     assert all(len(b["url"]) <= 512 for b in link_buttons(view))
+    labels = [b["label"] for b in link_buttons(view)]
+    assert labels[:3] == ["Download all", "Download ZIP", "View all (100)"]
+    assert all(len(label) <= 80 for label in labels)
     assert view.content_length() <= 4000
     hidden, names = next(t for t in texts(view) if "📎" in t).split("\n")
     assert hidden == "-# 🖼️ +50 more images and videos"  # beyond the gallery's 10
     assert names.endswith(" · +35 more") and names.count(" · ") == 5
+
+
+def view_all_url(view: Any) -> str | None:
+    return next((c["url"] for c in link_buttons(view) if c.get("id") == ID_VIEW), None)
+
+
+def pdf(name: str) -> Any:
+    return item(name, ctype="application/pdf", proxy_url=None)
+
+
+@pytest.mark.parametrize(
+    ("images", "pdfs", "shown"),
+    [
+        (10, 0, False),  # every image is a tile
+        (11, 0, True),  # "+1 more image or video"
+        (10, 5, False),  # the other files are all listed by name
+        (0, 6, True),  # "+1 more" name
+        (11, 6, True),
+    ],
+)
+def test_view_all_only_when_files_are_hidden(state: Any, images: int, pdfs: int, shown: bool) -> None:
+    items = [item(f"p{i}.jpg") for i in range(images)] + [pdf(f"d{i}.pdf") for i in range(pdfs)]
+    view = panel(handlers.link_reply(state, 7, items, "k"))
+    assert ("more" in text(view)) is shown
+    files_url, zip_url = main_urls(view)
+    url = view_all_url(view)
+    if not shown:
+        assert url is None and len(link_buttons(view)) == 2
+        return
+    # The page itself, without an action: it shows the grid and starts nothing.
+    assert url is not None and url == files_url.removesuffix(".files")
+    assert token_of(url) == token_of(zip_url)
+    assert [b["label"] for b in link_buttons(view)] == [
+        "Download all",
+        "Download ZIP",
+        f"View all ({images + pdfs})",
+    ]
+    assert custom_ids(view)[0].startswith("zb:basket:")  # the basket row is unchanged
+
+
+async def test_view_all_survives_an_in_place_edit(state: Any) -> None:
+    view, record = link_of(state, files=12)
+    url = view_all_url(view)
+    assert url
+    inter = interaction(state, message=message_of(view))
+    await AddLinkToBasketButton(record.link_id).callback(inter)
+    edited = inter.response.edit_message.call_args.kwargs["view"]
+    assert view_all_url(edited) == url
+    assert main_urls(edited) == main_urls(view)
+
+
+def test_basket_panel_view_all(state: Any) -> None:
+    state.store.add_to_basket(7, "c/1", [item(f"p{i}.jpg") for i in range(12)])
+    view = panel(views.basket_panel(state, 7))
+    assert [b["label"] for b in link_buttons(view)] == ["Download all", "Download your ZIP", "View all (12)"]
+    assert custom_ids(view) == ["zb:basketclear"]
+    url = view_all_url(view)
+    assert url and token_of(url) == token_of(main_urls(view)[1])
 
 
 def test_gallery_only_shows_allowed_thumbnails(state: Any) -> None:
