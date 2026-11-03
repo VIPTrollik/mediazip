@@ -6,8 +6,12 @@ straight to your phone — from inside the Discord app.
 - **Right-click / long-press a message → Apps → Download media.** The reply (only you see it)
   is one panel: thumbnails of the files and one-tap buttons **⬇️ Download all** and
   **🗜️ Download ZIP**, plus **Add to basket** and **Revoke**. A new reply replaces your previous one.
-- **Add to ZIP basket** on several messages (or **Add to basket** on a reply): the panel's
-  **🧺 Basket ZIP** button gives one ZIP with a folder per message (also `/basket show`).
+- **Add to ZIP basket** on several messages (or **Add to basket** on a reply): your basket
+  lives in one message in the bot's DM (posted silently, then kept up to date), with
+  **🧺 Basket ZIP** for one ZIP with a folder per message. Each add answers with a short note
+  and an **Open basket** link to it (also `/basket show`); **Clear basket** deletes it, and it
+  turns into "Basket expired" when the basket does. If the bot can't DM you, the basket shows
+  in the reply panel instead (`BASKET_DM=false` does that for everyone).
 - **Forward messages to the bot's DM** (or upload photos and videos there): one reply with a link for all
   of them.
 

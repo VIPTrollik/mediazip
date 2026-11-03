@@ -27,7 +27,9 @@
         sizes and dimensions of the media, and a one-way hash of the link's secret. Links expire after at most 60 minutes
         (sooner if Discord's file links expire first) and can be revoked at any time with <b>Revoke link</b>.</li>
       <li><b>Basket:</b> the same kind of data for the messages you add, kept for 60 minutes after your last change,
-        or until you clear it.</li>
+        or until you clear it. The bot shows your basket in one message in its DM with you; clearing the basket deletes
+        that message, and when the basket expires it is edited to "Basket expired", without links, previews or file
+        names. A message left over from a restart is cleaned up the next time you use the basket.</li>
       <li>Everything is deleted when it expires or when the service restarts.</li>
     </ul>
 

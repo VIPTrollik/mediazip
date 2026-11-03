@@ -51,16 +51,32 @@ Ephemeral reply: **one Components V2 panel** (`views.py`, a `LayoutView` with on
 ──────────────────────────────────────
 🧺 Basket: 7 files from 3 messages                (only with a non-empty basket)
 [➕ Add to basket] [🧺 Basket ZIP ↗] [🧹 Clear basket] [🗑️ Revoke]
+                    └ "🧺 Open basket ↗" (jump to the DM basket message) while that is live
 ```
 - **Direct actions (decided at G0):** the action rides in the fragment (`/d#<token>.files`, `/d#<token>.zip`), and the page starts it on load. "Open page" was dropped in v0.1: Download all lands on the page anyway.
-- **One live panel per user:** a new panel deletes the user's previous one through the interaction token that last touched it (if < 14 min old; tokens live 15). Buttons edit the panel they sit on and refresh its token. Only the live panel takes a click's token, and replies are ordered by a ticket taken before their send. In memory only: after a restart old panels stay until dismissed.
-- **Basket ZIP** is a pre-minted basket link; each user has one live basket link. A new panel re-mints it (only token hashes are stored), and an in-place edit keeps it while the basket is unchanged.
+- **One live panel per user:** a new panel deletes the user's previous one through the interaction token that last touched it (if < 14 min old; tokens live 15). Buttons edit the panel they sit on and refresh its token. Only the live panel takes a click's token, and replies are ordered by a ticket taken before their send. In memory only: after a restart old panels stay until dismissed. A click on a panel whose delete just landed gets a short "That panel was just replaced" note instead of "This interaction failed"; deletes swallow API and network errors (logged by type only).
+- **Basket ZIP** is a pre-minted basket link; each user has one live basket link. A new panel re-mints it (only token hashes are stored), and an in-place edit keeps it while the basket is unchanged. Only the live panel (or any panel, if none is live) may mint: a click on an older panel keeps the link it shows or drops its Basket ZIP, so it never revokes the live panel's. While the DM basket message (A3) is live, no panel mints: they show **Open basket ↗** instead.
 - **Revoke** says what it does: the link can't be opened again; pages already open keep working until Discord's file links expire.
 - Notices (no media, errors, cooldowns) are plain ephemeral text and leave the live panel alone. No media → "This message has no images or videos." (worded after `MEDIA_TYPES`; "nothing to download" with `all`).
 - Scope (decided after a live test): images and videos. Discord's CDN sends no CORS headers for documents (a PDF on `cdn.discordapp.com`: 200 without `Access-Control-Allow-Origin`; `media.discordapp.net`: 415), so the page can't fetch them; `MEDIA_TYPES=all` stays an opt-in.
 
 ### A2. Context menu — "Add to ZIP basket"
-The basket's own panel replaces the previous one: "✓ Added N files to your basket." (or duplicate/full), "🧺 Basket: N files from M messages · size · expiry", thumbnails, `[Download all ↗]` `[Basket ZIP ↗]` `[Clear basket]`.
+With the DM basket message (A3, the default): a **toast**, an ephemeral one-liner "✓ Added N files — 🧺 M files in your basket" with `[🧺 Open basket ↗]` (jump URL `https://discord.com/channels/@me/{channel_id}/{message_id}`). It deletes itself after ~8 s and is never the live panel, so it never deletes the user's download panel. On the first add the toast is sent at once ("Posting your basket in your DMs…") and gets its link when the DM message is there.
+Without it (`BASKET_DM=false`, or the bot can't DM the user): the basket's own panel replaces the previous one: "✓ Added N files to your basket." (or duplicate/full), "🧺 Basket: N files from M messages · size · expiry", thumbnails, `[Download all ↗]` `[Basket ZIP ↗]` `[Clear basket]`.
+
+### A3. The basket in the bot DM (`dm_basket.py`, `BASKET_DM=true` by default)
+One long-lived message per user in the bot DM holds the basket, so it survives Android dropping ephemeral messages:
+```
+🧺 Basket: 8 files from 3 messages · 12.3 MB · link expires in 59 min
+[thumb][thumb][thumb]…   -# 📎 other names
+[⬇️ Download all ↗] [🗜️ Basket ZIP ↗] [🧹 Clear basket] [🔄 Refresh]
+```
+- **Lifecycle:** posted silently (`SUPPRESS_NOTIFICATIONS`) on the first successful add, then edited in place. Edits are coalesced per user (one in flight, the latest state wins, ≥ 1 s apart) and never block the 3-second answer. **Clear** deletes the message and revokes the link. **Expiry** (basket TTL, or its link running out first; checked every 30 s) edits it to a compact "🧺 Basket expired" with no gallery, links or names. If the user deleted it (edit → 404/10008), it is forgotten and the next add posts a new one where the DM is now; it is never re-posted to the bottom otherwise.
+- **One owner of the basket link:** while the message is live only it mints the basket link; link panels show the basket line with **Open basket ↗**, and the in-place **Add to basket** on a panel keeps editing that panel (basket line + Open basket ↗). During the first post the panel is drawn without a basket button and redrawn once the message is there (or, on failure, with today's Basket ZIP and the note below). Add on a panel whose link can't be redrawn answers with the toast.
+- **Fallback:** if the DM send fails (403 with 50278 "can't DM this user" or 50007 "blocked", or any other API or network error), the user is marked unavailable for 6 h (bounded) and gets today's ephemeral panels; the first one says "-# Couldn't post your basket in your DMs; showing it here." A 403 on a DM burst reply sets the same mark. Verified live (2026-11-03): a user-installed app can DM, edit, read and delete its own messages with the user who installed it, even with no shared server; a user who hasn't installed it and shares no server gets 403/50278.
+- **`/basket show | link`:** the toast with the jump link while the message is live. Run in the bot DM with no live message, the command answers with the (non-ephemeral) basket message itself, which becomes the live one.
+- **Restart (nothing persisted):** on the user's first basket action the bot scans the DM's last 25 messages once (its own only) for old basket messages, found by the `zb:dmbasket:` custom id, and edits them to expired before posting the new one. The old messages' buttons still work: **Refresh** makes a copy live again if the basket still exists (any other copy turns expired; one live message per user), else turns it expired; **Clear** on an old copy turns it expired.
+- **Bounds:** at most one live message per user; the registry, the unavailable marks and the users-scanned set hold 10 000 users each (LRU; a dropped entry just leaves a stale message whose buttons still work). The existing cooldowns apply to every button, Refresh included.
 
 ### B. DM the bot
 - **Forward** a message to the bot's DM, or **upload** files directly to it.
@@ -69,7 +85,7 @@ The basket's own panel replaces the previous one: "✓ Added N files to your bas
 - Non-media message → short help text, at most once per 5 minutes per user.
 
 ### /basket
-`/basket show | link | clear` — available in all contexts. `show` and `link` both answer with the basket panel.
+`/basket show | link | clear` — available in all contexts. `show` and `link` both answer with the basket panel, or the toast and jump link while the DM basket message is live (A3). `clear` also deletes the DM basket message.
 
 ### Download page (`https://<host>/d#<token>`)
 - Thumbnail grid (images via media proxy resize params; videos show a placeholder + duration if known).
@@ -162,6 +178,7 @@ Bearer links are accepted; the following keeps them safe:
 | `MAX_FILES_PER_LINK` | `100` | |
 | `MEDIA_TYPES` | `image,video` | `audio`, `all` opt-in; the CDN sends no CORS for documents |
 | `DM_DEBOUNCE_SEC` | `8` | |
+| `BASKET_DM` | `true` | The basket as one message in the bot DM (§3 A3); `false`: ephemeral panels only |
 | `MAX_ACTIVE_LINKS_PER_USER` | `20` | |
 | `RESOLVE_RATE_PER_MIN` | `30` | per IP |
 | `TRUSTED_PROXIES` | `127.0.0.1/32` | nginx peers; compose sets `127.0.0.1,172.30.88.1` (its `zipbot` network gateway); other Docker setups must set their bridge gateway or all clients share one rate-limit bucket |
