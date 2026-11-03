@@ -256,7 +256,7 @@ async def test_landing_page(client: Any) -> None:
 def test_icon_sprite_is_self_contained() -> None:
     svg = re.sub(r"<!--.*?-->", "", (web_app.STATIC / "icons.svg").read_text(encoding="utf-8"), flags=re.S)
     assert "<style" not in svg and "<script" not in svg and "href=" not in svg  # no CSP or external fetches
-    assert 'id="i-download"' in svg
+    assert 'id="i-download"' in svg and 'id="i-github"' in svg
 
 
 async def test_resolve_ok_matches_contract(client: Any, store: Store) -> None:
@@ -564,8 +564,113 @@ async def test_analytics_script_is_served(client: Any) -> None:
     assert "javascript" in resp.headers["Content-Type"]
 
 
-def test_page_without_placeholder_fails_at_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_page_without_placeholder_fails_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
     (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
     monkeypatch.setattr(web_app, "STATIC", tmp_path)
     with pytest.raises(RuntimeError, match="placeholder"):
-        web_app._analytics_page("index.html", GA_ID)  # pyright: ignore[reportPrivateUsage]
+        web_app._analytics_page("index.html", settings)  # pyright: ignore[reportPrivateUsage]
+
+
+def test_page_with_unknown_placeholder_fails_at_startup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: Settings
+) -> None:
+    (tmp_path / "index.html").write_text("<!--analytics--><a href='{{REPO}}'></a>", encoding="utf-8")
+    monkeypatch.setattr(web_app, "STATIC", tmp_path)
+    with pytest.raises(RuntimeError, match=r"unknown placeholder {{REPO}}"):
+        web_app._analytics_page("index.html", settings)  # pyright: ignore[reportPrivateUsage]
+
+
+# --- Branding: icon, favicons, source link ----------------------------------------------
+
+BRAND_PAGES = ["/", "/privacy", "/terms", "/d", "/install"]  # /install: the 503 page before login
+FAVICON_LINKS = (
+    '<link rel="icon" href="/favicon.ico" sizes="32x32">',
+    '<link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">',
+    '<link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">',
+)
+
+
+@pytest.mark.parametrize("path", BRAND_PAGES)
+async def test_pages_carry_the_icon_and_favicons(client: Any, path: str) -> None:
+    html = await (await client.get(path)).text()
+    head = html[: html.index("</head>")]
+    for link in FAVICON_LINKS:
+        assert link in head, link
+    assert '<img class="brand__icon" src="/static/brand/mediazip-icon.svg" alt=""' in html
+    assert "{{" not in html
+
+
+@pytest.mark.parametrize(
+    ("path", "ctype"),
+    [
+        ("/favicon.ico", "image/x-icon"),
+        ("/static/brand/favicon.ico", None),
+        ("/static/brand/favicon.svg", "image/svg+xml"),
+        ("/static/brand/apple-touch-icon.png", "image/png"),
+        ("/static/brand/mediazip-icon.svg", "image/svg+xml"),
+        *((f"/static/brand/mediazip-icon-{size}.png", "image/png") for size in (128, 256, 512, 1024)),
+    ],
+)
+async def test_brand_assets_served(client: Any, path: str, ctype: str | None) -> None:
+    resp = await client.get(path)
+    assert resp.status == 200
+    if ctype is not None:
+        assert resp.headers["Content-Type"].startswith(ctype)
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+    body = await resp.read()
+    if path.endswith(".ico"):
+        assert body[:4] == b"\x00\x00\x01\x00"  # ICO header
+    elif path.endswith(".png"):
+        assert body[:8] == b"\x89PNG\r\n\x1a\n"
+
+
+def test_brand_svgs_are_self_contained() -> None:
+    for name in ("mediazip-icon.svg", "favicon.svg"):
+        svg = (web_app.STATIC / "brand" / name).read_text(encoding="utf-8")
+        assert "<style" not in svg and "<script" not in svg and "href" not in svg, name
+        assert "#C8F031" in svg and "#111214" in svg, name  # the icon keeps its own colours
+
+
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms"])
+async def test_source_link(client: Any, path: str) -> None:
+    html = await (await client.get(path)).text()
+    footer = html[html.index("<footer") :]
+    assert f'<a href="{web_app.REPO_URL}">Source on GitHub</a>' in footer
+    if path == "/":
+        main = html[html.index("<main") : html.index("</main>")]
+        assert f'<a class="repo-link" href="{web_app.REPO_URL}">' in main
+        assert "Open source: read the code on GitHub" in main
+        assert 'href="/static/icons.svg#i-github"' in main
+
+
+async def test_landing_has_no_em_dash(client: Any) -> None:
+    html = await (await client.get("/")).text()
+    assert "—" not in html and "&mdash;" not in html
+
+
+async def test_landing_link_preview(client: Any, settings: Settings) -> None:
+    html = await (await client.get("/")).text()
+    head = html[: html.index("</head>")]
+    base = settings.public_base_url
+    assert f'<meta property="og:image" content="{base}/static/brand/mediazip-icon-512.png">' in head
+    assert f'<meta property="og:url" content="{base}/">' in head
+    assert '<meta name="twitter:card" content="summary">' in head
+    assert re.search(r'<meta property="og:title" content="[^"]*MediaZip', head)
+
+
+async def test_landing_link_preview_follows_public_base_url(
+    aiohttp_client: Any, settings: Settings, store: Store
+) -> None:
+    other = settings.model_copy(update={"public_base_url": "https://mediazip.download"})
+    html = await (await (await aiohttp_client(create_app(other, store))).get("/")).text()
+    assert 'content="https://mediazip.download/static/brand/mediazip-icon-512.png"' in html
+
+
+def test_render_page_fills_and_escapes() -> None:
+    out = web_app.render_page(
+        '<a href="{{REPO_URL}}"></a><img src="{{BASE_URL}}/x">', None, 'https://a.example/"'
+    )
+    assert out == f'<a href="{web_app.REPO_URL}"></a><img src="https://a.example/&quot;/x">'

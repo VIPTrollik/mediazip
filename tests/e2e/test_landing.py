@@ -18,7 +18,7 @@ from playwright.sync_api import Browser, BrowserContext, Error, Page, Route, syn
 
 from zipbot.config import Settings
 from zipbot.store import Store
-from zipbot.web.app import create_app
+from zipbot.web.app import REPO_URL, create_app
 
 ENGINES = ["chromium", "firefox", "webkit"]
 APP_ID = 100000000000000008  # fake snowflake
@@ -80,7 +80,7 @@ def test_landing_renders_themed_without_csp_violations(page: Page, base_url: str
     page.on("response", lambda r: statuses.update({r.url.split("#")[0]: r.status}))
     page.goto(base_url + "/")
     page.wait_for_load_state("networkidle")
-    for asset in ("style.css", "landing.css", "icons.svg"):
+    for asset in ("style.css", "landing.css", "icons.svg", "brand/mediazip-icon.svg"):
         assert statuses.get(f"{base_url}/static/{asset}") == 200, asset
     assert all(u.startswith(base_url) for u in statuses), statuses  # no third-party requests
     assert page.evaluate("getComputedStyle(document.body).backgroundColor") == "rgb(246, 247, 249)"
@@ -100,6 +100,14 @@ def test_landing_structure_and_keyboard(page: Page, base_url: str) -> None:
     assert page.get_by_role("img", name="A message with a photo, a GIF and a video").is_visible()
     assert page.locator("h1").inner_text() == "Every image and video, saved or zipped."
     assert page.locator(".hero__brand").inner_text() == "MediaZip"
+    icon = page.locator(".hero__brand img")
+    assert icon.evaluate("e => e.complete && e.naturalWidth > 0")  # the app icon loaded
+    assert icon.get_attribute("alt") == ""  # decorative: the wordmark next to it names the app
+    repo = page.get_by_role("link", name="Open source: read the code on GitHub")
+    assert repo.is_visible() and repo.get_attribute("href") == REPO_URL
+    assert page.locator("main .landing__note").get_by_role("link", name="Open source").count() == 1
+    footer_repo = page.get_by_role("contentinfo").get_by_role("link", name="Source on GitHub")
+    assert footer_repo.get_attribute("href") == REPO_URL
     lead = page.locator(".hero__lead")
     assert "Download media" in lead.inner_text() and "Add to ZIP" in lead.inner_text()
     main_text = page.locator("main").inner_text()
@@ -171,3 +179,19 @@ def test_landing_fits_viewport(
     assert bg == ("rgb(30, 31, 34)" if scheme == "dark" else "rgb(246, 247, 249)")
     assert page.evaluate("window.__csp") == []
     context.close()
+
+
+@pytest.mark.parametrize("path", ["/privacy", "/terms", "/d"])
+def test_other_pages_show_the_brand_header(page: Page, base_url: str, path: str) -> None:
+    page.goto(base_url + path)
+    page.wait_for_load_state("networkidle")
+    banner = page.get_by_role("banner")
+    brand = banner.get_by_role("link", name="MediaZip")
+    assert brand.is_visible() and brand.get_attribute("href") == "/"
+    assert brand.locator("img").evaluate("e => e.complete && e.naturalWidth > 0")
+    assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), "horizontal scroll"
+
+
+def test_favicon_is_served(page: Page, base_url: str) -> None:
+    resp = page.request.get(base_url + "/favicon.ico")
+    assert resp.status == 200 and resp.headers["content-type"] == "image/x-icon"

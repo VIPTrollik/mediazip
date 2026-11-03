@@ -1,4 +1,4 @@
-/* zipbot design system: tokens + components. No framework, no external fonts; CSP style-src 'self'
+/* MediaZip design system: tokens + components. No framework, no external fonts; CSP style-src 'self'
    (no inline styles anywhere). Icons: /static/icons.svg sprite, <svg class="icon"><use href="…#i-x"/></svg>. */
 
 /* ---- 1. Tokens ------------------------------------------------------------------ */
@@ -153,11 +153,25 @@ img, svg { max-width: 100%; }
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
 
-/* ---- 3. Page layout: header, prose (legal pages), footer ------------------------ */
+/* ---- 3. Page layout: site header, page header, prose (legal pages), footer ----- */
+/* the brand bar above <main>: icon + wordmark, a link home; aligned with main's content column */
+body > .site-header {
+  margin: 0 max(var(--space-4), (100% - var(--content)) / 2 + var(--space-4));
+  padding-top: var(--space-4);
+}
+.brand {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  color: var(--fg); font-weight: 700; text-decoration: none;
+}
+.brand:hover { text-decoration: underline; }
+/* the icon keeps its own dark square and lime badge (an image, not themed) */
+.brand__icon { width: 28px; height: 28px; flex: none; border-radius: 22%; }
 .page-header { margin-bottom: var(--space-5); }
 .page-header > * { margin: 0; }
 .page-header > * + * { margin-top: var(--space-1); }
 .page-header .muted { font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+/* keep running text to a readable measure on wide screens (the /d summary and hints) */
+.page-header > p, .stack-sm > p.small { max-width: var(--prose); }
 
 .prose { max-width: var(--prose); }
 .prose h2 { margin-top: var(--space-6); }
@@ -179,6 +193,13 @@ img, svg { max-width: 100%; }
 /* outside <main> (its own contentinfo landmark), aligned with main's content column */
 body > .site-footer {
   margin: 0 max(var(--space-4), (100% - var(--content)) / 2 + var(--space-4)) var(--space-7);
+}
+/* touch screens: the brand link and the footer links (stand-alone, not inline in a sentence)
+   get a 44px-tall tap area; with a mouse they keep their text height */
+@media (pointer: coarse) {
+  .brand, .site-footer nav a { min-height: var(--control-md); display: inline-flex; align-items: center; }
+  .site-footer nav { gap: 0 var(--space-5); }
+  body > .site-footer { padding-top: var(--space-2); }
 }
 
 /* ---- 4. Icon -------------------------------------------------------------------- */

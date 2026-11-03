@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <title>MediaZip: a two-by-two image grid whose last tile is a download badge</title>
+  <rect width="512" height="512" fill="#111214"/>
+  <g fill="#EDEFF2">
+    <rect x="140" y="140" width="106" height="106" rx="24"/>
+    <rect x="266" y="140" width="106" height="106" rx="24"/>
+    <rect x="140" y="266" width="106" height="106" rx="24"/>
+  </g>
+  <circle cx="319" cy="319" r="56" fill="#C8F031"/>
+  <g fill="none" stroke="#111214" stroke-width="16" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M319 290 V344"/>
+    <path d="M297 324 L319 346 L341 324"/>
+  </g>
+</svg>

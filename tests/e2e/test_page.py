@@ -997,3 +997,39 @@ def test_zip_of_large_file(page: Page, server: tuple[str, Store], cdn: Cdn) -> N
         page.click("#btn-zip")
     with zipfile.ZipFile(io.BytesIO(Path(dl.value.path()).read_bytes())) as z:
         assert z.read("big.bin") == big
+
+
+# --- responsive: every page at phone widths --------------------------------------
+
+NARROW_PAGES = ["/", "/d", "/privacy", "/terms", "/install"]  # /install: the 503 page (bot not logged in)
+FIFTEEN = [
+    ("IMG_20261102_183455.jpg", 0),
+    ("a_really_long_file_name_without_any_spaces_from_a_phone_camera_2026_11_02.jpg", 0),
+    *((f"photo ({n}).jpg", n // 5) for n in range(1, 14)),
+]
+OUTSIDE_VIEWPORT = """[...document.body.querySelectorAll('*')].filter(e => {
+  const r = e.getBoundingClientRect();
+  return r.width > 0 && (r.right > innerWidth + 0.5 || r.left < -0.5);
+}).map(e => e.outerHTML.slice(0, 80))"""
+
+
+@pytest.mark.parametrize("width", [320, 375])
+@pytest.mark.parametrize("path", NARROW_PAGES)
+def test_no_horizontal_overflow_on_phones(
+    browser: Browser, server: tuple[str, Store], cdn: Cdn, path: str, width: int
+) -> None:
+    base, store = server
+    url = base + path
+    if path == "/d":
+        url += "#" + make_link(store, cdn, FIFTEEN)
+    for page in _context_page(browser, cdn, viewport={"width": width, "height": 740}):
+        for scheme in ("light", "dark"):
+            page.goto(url)
+            page.emulate_media(color_scheme=scheme)  # after the load: see test_landing_fits_viewport
+            if path == "/d":
+                assert wait_state(page, "ready") == "ready"
+                assert page.locator("#grid .tile").count() == 15
+            page.wait_for_load_state("networkidle")
+            scroll = page.evaluate("[document.scrollingElement.scrollWidth, innerWidth]")
+            assert scroll[0] <= scroll[1], f"horizontal scroll at {width}px {scheme}: {scroll}"
+            assert page.evaluate(OUTSIDE_VIEWPORT) == []
