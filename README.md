@@ -1,190 +1,166 @@
-# MediaZip
+<p align="center">
+  <img src="src/zipbot/web/static/brand/mediazip-icon.svg" width="96" alt="MediaZip logo">
+</p>
 
-Save every image and video of a Discord message (or a few messages) at once — as a ZIP or
-straight to your phone — from inside the Discord app.
+<h1 align="center">MediaZip</h1>
 
-- **Right-click / long-press a message → Apps → Download media.** The reply (only you see it)
-  is one panel: thumbnails of the files and one-tap buttons **⬇️ Download all** and
-  **🗜️ Download ZIP**, plus **Add to ZIP** and **Revoke**. A new reply replaces your previous one.
-- **Add to ZIP** on several messages (or on a reply): your ZIP lives in one message in the
-  bot's DM (posted silently, then kept up to date), with **🗜️ Download your ZIP** for one ZIP
-  with a folder per message. Each add answers with a short note and an **Open your ZIP** link
-  to it (also `/zip show`); **Clear your ZIP** deletes it, and it turns into "Your ZIP
-  expired" when it does. If the bot can't DM you, your ZIP shows in the reply panel instead
-  (`BASKET_DM=false` does that for everyone). Internally this is still the "basket".
-- **Forward messages to the bot's DM** (or upload photos and videos there): one reply with a link for all
-  of them.
+<p align="center">
+  Save every image and video of a Discord message at once, as a ZIP or straight to your device.
+  <br>
+  <a href="https://mediazip.download">mediazip.download</a> ·
+  <a href="https://mediazip.download/install"><b>Add MediaZip to Discord</b></a>
+</p>
 
-The server never touches the files. The bot captures Discord's signed CDN URLs, and your
-browser downloads them directly from Discord and builds the ZIP locally (Discord's CDN sends
-`Access-Control-Allow-Origin: *`). Links live ≤ 60 min, are revocable, and are kept in memory
-only. Details: [PLAN.md](PLAN.md).
+---
 
-## Requirements
+## How it works
 
-- A Discord application with a bot (setup below).
-- Docker + Docker Compose.
-- A public HTTPS hostname (production: `mediazip.download`). The container is published on
-  `127.0.0.1:8080` only (`HOST_PORT` changes the port); put your own reverse proxy with TLS
-  in front (example for nginx + certbot in [deploy/nginx.conf.example](deploy/nginx.conf.example)).
+MediaZip is a Discord app that you install to your account. It then works in every server and
+DM, including ones where the bot isn't a member.
 
-## 1. Discord Developer Portal
+- **Right-click (or long-press) a message → Apps → Download media.** Only you see the reply.
+  It shows thumbnails of the files and two buttons: **Download all** and **Download ZIP**.
+  A new reply replaces your previous one.
+- **Apps → Add to ZIP** collects several messages (up to 10 by default) into one ZIP with a
+  folder per message. Your ZIP is kept as a single message in your DM with the bot, and that
+  message is updated each time you add something. Its **Download your ZIP** button downloads
+  the whole collection.
+- **`/zip show`, `/zip link` and `/zip clear`** show, link or empty your ZIP.
+- **Forward messages, or upload files, to the bot's DM.** The bot sends one reply with a link
+  for all of them.
 
-1. <https://discord.com/developers/applications> → **New Application**.
-2. **General Information:** name `MediaZip`; set *Terms of Service URL* to
-   `https://mediazip.download/terms` and *Privacy Policy URL* to
-   `https://mediazip.download/privacy` (`https://<host>/…` for another host).
-3. **Bot:** **Reset Token** and copy it (this is `DISCORD_TOKEN`). *Public Bot* on,
-   *Requires OAuth2 Code Grant* off. **All three Privileged Gateway Intents off** — the app
-   doesn't need them.
+Each button opens the **download page** on mediazip.download. The page fetches the files from
+Discord and then saves them one by one, builds a ZIP in your browser, or offers your device's
+share sheet where the browser supports it.
+
+**Scope: images and videos only.** Discord's CDN sends `Access-Control-Allow-Origin: *` for
+images and videos, but not for documents, archives and other files. Without that header the
+browser can't fetch those files, so they're left out. Self-hosters can opt in to `audio` or
+`all` with `MEDIA_TYPES`, but expect the files without CORS headers to fail.
+
+## Privacy and security
+
+- **The server never handles file bytes.** The bot stores Discord's signed CDN URLs. Your
+  browser downloads the files directly from `cdn.discordapp.com` / `media.discordapp.net`,
+  without cookies or a referrer, and builds the ZIP on your device.
+- **Everything is kept in memory only.** The server stores nothing on disk, and a restart
+  clears it all. It holds:
+  - for each link: your Discord user id, the files' CDN URLs, names and sizes, and the expiry
+    time;
+  - for your ZIP: the same data per added message, plus the id of the DM message that shows it;
+  - for the API rate limiter: the client IP address (or IPv6 /64), with the times of the last
+    minute's requests. Up to the 10 000 most recently seen clients are kept.
+
+  The reverse proxy in front of the app (nginx on mediazip.download) keeps its own access
+  log of IP addresses and paths.
+- **Links expire.** A link lasts 60 minutes by default (`LINK_TTL_MIN`), or less if Discord's
+  CDN URLs expire sooner. You can revoke it with the **Revoke** button. Your ZIP expires after
+  60 minutes without changes (`BASKET_TTL_MIN`), and its link goes with it.
+- **The link token stays out of URLs that reach the server.** It is 256 bits of randomness,
+  sent only in replies that only you can see, or in your own DM. The server stores only its
+  SHA-256 hash. The token sits in the URL fragment (`/d#…`), which browsers never send to the
+  server, so it doesn't appear in access logs. The page sends it to `POST /api/resolve` in the
+  request body.
+- **A link is a bearer link.** Anyone who has it can download those files until it expires or
+  you revoke it.
+- **The bot sees very little.** It requests no privileged intents, including Message Content.
+  It only reads the messages you run it on, and the messages you send or forward to its DM.
+  At the default log level, its own logs record error types, not file names, URLs or
+  tokens.
+- **Analytics run only on the landing, privacy and terms pages**, and only when
+  `GA_MEASUREMENT_ID` is set, which mediazip.download does. They use Google Analytics 4 in
+  Consent Mode with all storage denied, so no cookies are set. The URL sent to Google has its
+  query and fragment removed. The download page and the API never load analytics.
+- **The web side is hardened.** It has a strict CSP (`self` only, except for analytics on the
+  pages above), `Referrer-Policy: no-referrer`, and per-IP rate limits on the API. The
+  container runs as a non-root user with a read-only filesystem and all capabilities dropped.
+
+The full policy is at [mediazip.download/privacy](https://mediazip.download/privacy).
+
+## Self-hosting
+
+You need Docker with Compose, a public HTTPS hostname and a Discord application.
+
+### 1. Create the Discord application
+
+1. In the [Developer Portal](https://discord.com/developers/applications), choose
+   **New Application**.
+2. **General Information:** set the Terms of Service URL to `https://<host>/terms` and the
+   Privacy Policy URL to `https://<host>/privacy`.
+3. **Bot:** choose **Reset Token** and copy the token into `DISCORD_TOKEN`. Turn *Public Bot*
+   on and *Requires OAuth2 Code Grant* off. Leave all three Privileged Gateway Intents off.
 4. **Installation:**
-   - Installation Contexts: ✅ User Install, ✅ Guild Install.
-   - Install Link: *Discord Provided Link*.
+   - Installation Contexts: enable both User Install and Guild Install.
    - User Install scopes: `applications.commands`.
-   - Guild Install scopes: `applications.commands`, `bot`; permissions: none.
-5. Leave *Interactions Endpoint URL* empty (the bot uses the gateway).
+   - Guild Install scopes: `applications.commands` and `bot`, with no permissions.
+5. Leave *Interactions Endpoint URL* empty, because the bot uses the gateway.
 
-Install it with the link shown on the Installation page: *Add to My Apps* (works in every
-server and DM, even where the bot isn't a member) and/or *Add to Server*.
-
-## 2. Configure
+### 2. Configure
 
 ```sh
 cp .env.example .env
-# edit .env: DISCORD_TOKEN=..., PUBLIC_BASE_URL=https://mediazip.download
-# (local dev: PUBLIC_BASE_URL=http://localhost:8080)
 ```
 
-All settings and defaults are listed in [.env.example](.env.example). The app refuses to
-start if a value is missing or invalid, and says which one (never printing its value).
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `DISCORD_TOKEN` | required | The bot token |
+| `PUBLIC_BASE_URL` | required | The public origin, such as `https://mediazip.download`. It must use https, except for localhost. |
+| `DISCORD_APPLICATION_ID` | unset | Used for `/install` before the bot logs in |
+| `LINK_TTL_MIN` / `BASKET_TTL_MIN` | `60` / `60` | How long links and ZIPs live |
+| `BASKET_MAX_MESSAGES` / `MAX_FILES_PER_LINK` | `10` / `100` | Size limits |
+| `MEDIA_TYPES` | `image,video` | Any of `image`, `video` and `audio`, or `all` |
+| `BASKET_DM` | `true` | Keep your ZIP as a DM message. With `false`, it appears in reply panels only. |
+| `MAX_ACTIVE_LINKS_PER_USER`, `RESOLVE_RATE_PER_MIN`, `DM_DEBOUNCE_SEC` | see `.env.example` | Abuse limits |
+| `TRUSTED_PROXIES` | `127.0.0.1` | The peers whose `X-Forwarded-For` header is trusted. Compose adds its network gateway. |
+| `GA_MEASUREMENT_ID` | unset | Cookieless GA4 on `/`, `/privacy` and `/terms`. Leave it unset for no analytics. |
+| `HOST_PORT`, `ZIPBOT_SUBNET`, `ZIPBOT_GATEWAY` | `8080`, `172.30.88.0/24`, `.1` | Compose settings: the host port and the network |
 
-`MEDIA_TYPES` (default `image,video`) decides which attachments go into a link: any of
-`image`, `video`, `audio`, or `all` for every file (PDFs, archives, files without an
-extension...). `audio` and `all` are opt-ins. With `all`, expect failures: Discord's CDN
-sends no CORS headers for documents and similar files (images and videos get
-`Access-Control-Allow-Origin: *`), so the browser can't fetch them and the download page
-reports them as failed. Embeds (link previews, GIFs) only ever count as images or videos.
+[.env.example](.env.example) lists every key. The app refuses to start if a value is invalid
+and names the key, without printing its value.
 
-`GA_MEASUREMENT_ID` (default unset: no analytics) turns on Google Analytics 4 for the
-landing, privacy and terms pages only, in Consent Mode with all storage denied, so it runs
-without cookies (check your own legal requirements, e.g. whether you need a notice or
-banner where you operate). The server then adds a `ga-id` meta tag and
-`/static/analytics.js` to those three pages, widens their CSP for Google's hosts, and shows
-the "Website analytics" section of the privacy page (without the setting, that page says no
-analytics are used). The download page `/d`, whose URL fragment holds the link token, the API
-and the install page never load it.
-
-Expect partial numbers: with consent denied, GA4 gets cookieless pings only, so reports are
-modelled or incomplete (no returning users, little or no attribution), and Realtime may show
-little or nothing. That is the price of not setting cookies, not a fault in the setup.
-
-`TRUSTED_PROXIES` (default `127.0.0.1/32`) lists the peers whose `X-Forwarded-For` header
-is believed, for per-client rate limiting. With nginx on the host the container sees the
-Docker bridge gateway as the peer. `docker-compose.yml` uses a fixed `zipbot` network,
-by default subnet `172.30.88.0/24` with gateway `172.30.88.1`, and sets
-`TRUSTED_PROXIES=127.0.0.1,<gateway>` for you. Other Docker setups must set it to their own
-bridge gateway (`docker network inspect <network>`); otherwise all clients share one
-rate-limit bucket.
-
-Compose-only settings, read from the same `.env` (or the shell) when `docker compose` runs:
-
-- `HOST_PORT` (default `8080`): the host port, always bound to `127.0.0.1`. Use e.g. `8090`
-  if 8080 is taken, and point nginx there.
-- `ZIPBOT_SUBNET` / `ZIPBOT_GATEWAY` (defaults `172.30.88.0/24` / `172.30.88.1`): the
-  network's fixed subnet, for hosts where it overlaps another Docker network ("Pool overlaps
-  with other one on this address space"; `docker network inspect $(docker network ls -q)
-  --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}}{{end}}'` lists the taken ones).
-  Change both together; `TRUSTED_PROXIES` follows the gateway unless you set it yourself.
-  An existing network keeps its old subnet, so run `docker compose down` before changing
-  them, then `docker compose up -d`.
-
-## 3. Run
+### 3. Run
 
 ```sh
 docker compose up -d --build
-docker compose ps          # STATUS shows (healthy) after ~20 s
-docker compose logs -f     # "synced 3 global commands", "gateway ready"
+docker compose ps        # shows "healthy" after about 20 seconds
 ```
 
-Then point your reverse proxy at `http://127.0.0.1:${HOST_PORT}` (8080 by default) and check
-`https://<host>/healthz` → `{"status": "ok"}`. Slash commands and context menus appear in
-Discord within a minute; restart the Discord app if they don't.
+The container listens on `127.0.0.1:${HOST_PORT}` only, so put a TLS reverse proxy in front
+of it. [deploy/nginx.conf.example](deploy/nginx.conf.example) is a ready-made nginx site. It
+includes API rate limiting, and `certbot --nginx` adds HTTPS to it. Check that
+`https://<host>/healthz` returns `{"status": "ok"}`.
 
-Update: `git pull && docker compose up -d --build`. Links and ZIPs (baskets) are lost on restart
-(they are short-lived by design). When a command changed (e.g. "Download attachments" is
-"Download media" again since media became the scope), the bot re-syncs on start; restart the
-Discord app if the old name still shows.
+To update, run `git pull && docker compose up -d --build`. A restart drops live links and
+ZIPs, which are short-lived by design. Run only one instance per bot token.
 
-### Deploy on mediazip.download
-
-The image builds natively on amd64 and arm64 Linux hosts with Docker
-(the base image and every locked wheel have arm64 builds).
-
-1. DNS: `A` (and `AAAA`, if the server has IPv6) records for `mediazip.download` → the server.
-2. `git clone <repo> ~/mediazip && cd ~/mediazip`, then `cp .env.example .env` and set:
-
-   ```sh
-   DISCORD_TOKEN=...
-   PUBLIC_BASE_URL=https://mediazip.download
-   GA_MEASUREMENT_ID=G-Z8VRMRQ3X4
-   HOST_PORT=8090
-   # only if 172.30.88.0/24 is already used by another network (`docker compose down` first
-   # if the stack already ran):
-   # ZIPBOT_SUBNET=172.30.89.0/24
-   # ZIPBOT_GATEWAY=172.30.89.1
-   ```
-
-3. `sudo docker compose up -d --build`, then `sudo docker compose ps` (healthy) and
-   `curl -s http://127.0.0.1:8090/healthz`.
-4. nginx, HTTP first: write the plain `listen 80` block from
-   [deploy/nginx.conf.example](deploy/nginx.conf.example) (`server_name mediazip.download`,
-   `proxy_pass http://127.0.0.1:8090`) to `/etc/nginx/sites-enabled/mediazip.download` (or wherever the
-   server's sites are included), and create `/etc/nginx/zipbot_proxy.conf` as shown at its end.
-5. `sudo nginx -t && sudo systemctl reload nginx`, and check
-   `curl -s http://mediazip.download/healthz`.
-6. `sudo certbot --nginx -d mediazip.download`: it adds `listen 443 ssl`, the certificate and
-   the HTTP → HTTPS redirect to that block (add `http2 on;` afterwards if you want it), and
-   the HSTS header from the example then takes effect.
-7. Verify: `https://mediazip.download/healthz` → `{"status": "ok"}`, `http://` redirects to
-   `https://`, and in the Developer Portal set the Terms URL `https://mediazip.download/terms`
-   and the Privacy URL `https://mediazip.download/privacy`.
-8. Analytics check: open `https://mediazip.download/` in a fresh browser profile. DevTools →
-   Application → Cookies shows no cookies for the site, and the Console shows no CSP
-   violations; `/d` loads nothing from Google (Network tab). In GA, Realtime or DebugView may
-   show only a few or no hits, as described above.
-9. Stop any other copy of the bot (e.g. a local one) once this one is up: both would receive
-   every command and DM, and links made by one don't exist in the other's memory.
-
-### If the token leaks
-
-Developer Portal → Bot → **Reset Token**, put the new one in `.env`,
-`docker compose up -d`. The old token stops working immediately.
+If the token leaks, choose **Reset Token** in the Developer Portal, update `.env`, and run
+`docker compose up -d`.
 
 ## Development
 
 ```sh
 python -m venv .venv
-.venv/Scripts/python -m pip install -e ".[dev]"      # Windows; .venv/bin/python elsewhere
-.venv/Scripts/python -m playwright install chromium firefox webkit
-powershell -File scripts/check.ps1                     # or: make check
+.venv/bin/python -m pip install -e ".[dev]"        # on Windows: .venv/Scripts/python
+.venv/bin/python -m playwright install chromium firefox webkit
+make check                                         # on Windows: powershell -File scripts/check.ps1
 ```
 
-`check` runs ruff, pyright, the test suite (unit, handler, web, and Playwright tests on three
-browser engines) and the coverage gate.
+The gate runs ruff (lint and format), pyright, and pytest with coverage. The tests cover the
+unit, handler and web layers, plus Playwright end-to-end tests in Chromium, Firefox and
+WebKit. The gate also runs `pip-audit` on `requirements.lock`.
 
-Handy for manual testing:
+Code layout:
 
-- `PUBLIC_BASE_URL=http://localhost:8080` in `.env`, and `adb reverse tcp:8080 tcp:8080`
-  so an Android phone can open the links.
-- `python scripts/dev_link.py <channel_id> <message_id> ...` serves the page with a link to
-  real messages (fetched with the bot token), without starting the bot.
-
-Layout: `src/zipbot/` (`media.py` extraction, `naming.py` file names, `store.py` links and
-baskets, `handlers.py`/`views.py`/`cogs/` the Discord side, `web/` the page and API),
-`tests/` (fixtures are scrubbed real payloads; `tests/contract/` holds the versioned API
-schema), `tests/spike/` the Phase 0 experiments.
+- `src/zipbot/` holds the code:
+  - `media.py` extracts the media;
+  - `naming.py` names the files;
+  - `store.py` holds links and ZIPs;
+  - `handlers.py`, `views.py`, `dm_basket.py` and `cogs/` are the Discord side;
+  - `web/` is the pages and API.
+- `tests/fixtures/` holds scrubbed Discord payloads.
+- `tests/contract/` holds the API schema.
 
 ## License
 
-MIT for this project; `client-zip` (vendored, MIT) — see
-`src/zipbot/web/static/VENDOR.md`.
+TBD. The vendored [client-zip](https://github.com/Touffy/client-zip) is MIT-licensed; see
+[src/zipbot/web/static/VENDOR.md](src/zipbot/web/static/VENDOR.md).
