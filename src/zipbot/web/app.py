@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 import logging
 import re
 import time
@@ -31,6 +32,24 @@ CSP = (
     f"connect-src 'self' {_cdn}; script-src 'self'; style-src 'self'; "
     "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
 )
+# Google Analytics (GA_MEASUREMENT_ID) widens the CSP for "/", "/privacy" and "/terms" only, never for
+# /d (the link token is in its URL fragment) or the API. Hosts from Google's CSP guide, "Google
+# Analytics" without Ads features: https://developers.google.com/tag-platform/security/guides/csp
+# (checked 2026-11-03; it lists script-src-elem www.googletagmanager.com, img-src
+# www.googletagmanager.com *.google-analytics.com, connect-src www.googletagmanager.com
+# *.google-analytics.com *.google.com). We add *.analytics.google.com (GA4's regional collection
+# endpoints) and leave out *.google.com: with consent denied and no Google Signals or Ads
+# features nothing is sent there, and a blocked request only costs a CSP report.
+GA_SCRIPT = "https://www.googletagmanager.com"
+GA_CONNECT = "https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com"
+GA_IMG = "https://*.google-analytics.com https://www.googletagmanager.com"
+ANALYTICS_CSP = (
+    f"default-src 'self'; img-src 'self' blob: {_cdn} {GA_IMG}; media-src 'self' blob: {_cdn}; "
+    f"connect-src 'self' {_cdn} {GA_CONNECT}; script-src 'self' {GA_SCRIPT}; style-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+)
+ANALYTICS_PLACEHOLDER = "<!--analytics-->"
+ANALYTICS_PAGES = {"/": "index.html", "/privacy": "privacy.html", "/terms": "terms.html"}
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "Referrer-Policy": "no-referrer",
@@ -59,6 +78,8 @@ STORE_KEY = web.AppKey("store", Store)
 # Returns the application id for /install, or None while it is not known yet.
 APPLICATION_ID_KEY = web.AppKey[Callable[[], int | None]]("application_id")
 UNAVAILABLE_KEY = web.AppKey("install_unavailable", bytes)  # the /install 503 page
+# Set on a response that carries the Google Analytics tags: it gets ANALYTICS_CSP.
+ANALYTICS_KEY = web.ResponseKey("analytics", bool)
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -138,6 +159,8 @@ async def security_headers(request: web.Request, handler: Handler) -> web.Stream
         log.error("unhandled %s on %s %s", type(exc).__name__, request.method, request.path)
         response = web.json_response({"error": "internal"}, status=500)
     response.headers.update(SECURITY_HEADERS)
+    if not isinstance(response, web.HTTPException) and response.get(ANALYTICS_KEY):
+        response.headers["Content-Security-Policy"] = ANALYTICS_CSP
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     elif "Cache-Control" not in response.headers:
@@ -168,6 +191,32 @@ async def resolve(request: web.Request) -> web.Response:
 def _page(name: str) -> Handler:
     async def handler(_: web.Request) -> web.FileResponse:
         return web.FileResponse(STATIC / name, headers={"Content-Type": "text/html; charset=utf-8"})
+
+    return handler
+
+
+def analytics_tags(measurement_id: str | None) -> str:
+    """What replaces a page's `<!--analytics-->`: nothing, or the id and the loader. No inline
+    script (the CSP forbids it): /static/analytics.js reads the id from the meta tag."""
+    if measurement_id is None:
+        return ""
+    return (
+        f'<meta name="ga-id" content="{html.escape(measurement_id)}">\n'
+        '<script src="/static/analytics.js" defer></script>'
+    )
+
+
+def _analytics_page(name: str, measurement_id: str | None) -> Handler:
+    """A page that may carry Google Analytics, rendered once at startup."""
+    source = (STATIC / name).read_text(encoding="utf-8")
+    if ANALYTICS_PLACEHOLDER not in source:
+        raise RuntimeError(f"{name} has no {ANALYTICS_PLACEHOLDER} placeholder")
+    body = source.replace(ANALYTICS_PLACEHOLDER, analytics_tags(measurement_id)).encode()
+
+    async def handler(_: web.Request) -> web.Response:
+        response = web.Response(body=body, content_type="text/html", charset="utf-8")
+        response[ANALYTICS_KEY] = measurement_id is not None
+        return response
 
     return handler
 
@@ -236,11 +285,10 @@ def create_app(
     app[APPLICATION_ID_KEY] = application_id or ApplicationId(settings.discord_application_id)
     app[UNAVAILABLE_KEY] = (STATIC / "install-unavailable.html").read_bytes()
     app.router.add_get("/healthz", healthz)
-    app.router.add_get("/", _page("index.html"))
+    for path, name in ANALYTICS_PAGES.items():  # never /d: its URL fragment holds the link token
+        app.router.add_get(path, _analytics_page(name, settings.ga_measurement_id))
     app.router.add_get("/install", install)
     app.router.add_get("/d", _page("d.html"))
-    app.router.add_get("/privacy", _page("privacy.html"))
-    app.router.add_get("/terms", _page("terms.html"))
     app.router.add_post("/api/resolve", resolve)
     app.router.add_static("/static/", STATIC, show_index=False, follow_symlinks=False, append_version=False)
     return app

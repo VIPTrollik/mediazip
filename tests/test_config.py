@@ -53,6 +53,24 @@ def test_media_types_opt_in(env: pytest.MonkeyPatch, value: str, types: set[str]
     assert s.all_media == (value == "all")
 
 
+def test_ga_measurement_id_optional(env: pytest.MonkeyPatch) -> None:
+    env.delenv("GA_MEASUREMENT_ID", raising=False)
+    assert load().ga_measurement_id is None  # unset: no Google Analytics at all
+    env.setenv("GA_MEASUREMENT_ID", "")
+    assert load().ga_measurement_id is None
+    env.setenv("GA_MEASUREMENT_ID", " G-Z8VRMRQ3X4 ")
+    assert load().ga_measurement_id == "G-Z8VRMRQ3X4"
+
+
+@pytest.mark.parametrize(
+    "value", ["UA-12345-1", "G-abc123", "G-12", "G-12345678901234567", 'G-1234"><script>', "GT-ABCDEF"]
+)
+def test_rejects_bad_ga_measurement_id(env: pytest.MonkeyPatch, value: str) -> None:
+    env.setenv("GA_MEASUREMENT_ID", value)
+    with pytest.raises(ValidationError):
+        load()
+
+
 def test_token_is_secret(env: pytest.MonkeyPatch) -> None:
     s = load()
     assert "s3cr3t" not in repr(s)

@@ -401,3 +401,104 @@ def test_client_ip_custom_proxies(settings: Settings) -> None:
     s = settings.model_copy(update={"trusted_proxies": (ip_network("10.0.0.0/8"),)})
     assert client_ip(_req("172.18.0.1", "203.0.113.9"), s) == "172.18.0.1"
     assert client_ip(_req("10.1.2.3", "203.0.113.9"), s) == "203.0.113.9"
+
+
+# --- Google Analytics (cookieless, GA_MEASUREMENT_ID) ----------------------------------
+
+GA_ID = "G-TEST1234"
+GA_MARKERS = ("ga-id", "analytics.js", "googletagmanager", "google-analytics", "<!--analytics-->")
+GA_PAGES = ["/", "/privacy", "/terms"]
+
+
+@pytest.fixture
+async def ga_client(aiohttp_client: Any, settings: Settings, store: Store) -> Any:
+    return await aiohttp_client(create_app(settings.model_copy(update={"ga_measurement_id": GA_ID}), store))
+
+
+@pytest.mark.parametrize("path", [*GA_PAGES, "/d", "/install"])
+async def test_no_analytics_when_unset(client: Any, path: str) -> None:
+    resp = await client.get(path, allow_redirects=False)
+    html = await resp.text()
+    for marker in GA_MARKERS:
+        assert marker not in html, marker
+    assert resp.headers["Content-Security-Policy"] == SECURITY_HEADERS["Content-Security-Policy"]
+
+
+@pytest.mark.parametrize("path", GA_PAGES)
+async def test_analytics_on_the_three_pages_when_set(ga_client: Any, path: str) -> None:
+    resp = await ga_client.get(path)
+    assert resp.status == 200
+    html = await resp.text()
+    head = html[: html.index("</head>")]
+    assert f'<meta name="ga-id" content="{GA_ID}">' in head
+    assert '<script src="/static/analytics.js" defer></script>' in head
+    assert "<!--analytics-->" not in html
+    assert not re.search(r"<script(?![^>]*\ssrc=)", html)  # no inline script: the CSP forbids it
+    assert "googletagmanager" not in html  # gtag.js is loaded by analytics.js, after the consent default
+    csp = resp.headers["Content-Security-Policy"]
+    assert csp == web_app.ANALYTICS_CSP
+    assert "script-src 'self' https://www.googletagmanager.com;" in csp
+    assert "https://*.google-analytics.com https://*.analytics.google.com" in csp
+    assert "unsafe" not in csp and "frame-ancestors 'none'" in csp
+    for name, value in SECURITY_HEADERS.items():  # everything else unchanged
+        if name != "Content-Security-Policy":
+            assert resp.headers[name] == value
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["/d", "/install", "/healthz", "/static/d.js", "/static/analytics.js", "/does-not-exist", "/privacy/"],
+)
+async def test_csp_stays_strict_elsewhere_when_set(ga_client: Any, path: str) -> None:
+    resp = await ga_client.get(path, allow_redirects=False)
+    csp = resp.headers["Content-Security-Policy"]
+    assert csp == SECURITY_HEADERS["Content-Security-Policy"]
+    assert "google" not in csp
+
+
+async def test_never_on_the_download_page_or_api(ga_client: Any) -> None:
+    html = await (await ga_client.get("/d")).text()
+    for marker in GA_MARKERS:
+        assert marker not in html, marker
+    resp = await ga_client.post("/api/resolve", json={"token": "x" * 43})
+    assert "google" not in resp.headers["Content-Security-Policy"]
+    resp = await ga_client.get("/install")  # the 503 page while the bot isn't logged in
+    assert resp.status == 503
+    assert "analytics" not in await resp.text()
+    assert "google" not in resp.headers["Content-Security-Policy"]
+
+
+def test_analytics_script_order_and_page_location() -> None:
+    js = (web_app.STATIC / "analytics.js").read_text(encoding="utf-8")
+    code = re.sub(r"(?m)(^|\s)//.*$", "", js)  # comments aside (not the https:// URL)
+    steps = [
+        "window.dataLayer = window.dataLayer || [];",
+        "function gtag() { dataLayer.push(arguments); }",
+        'gtag("consent", "default", {',
+        'gtag("js", new Date());',
+        'gtag("config", id,',
+        'document.createElement("script")',
+        "https://www.googletagmanager.com/gtag/js?id=",
+    ]
+    positions = [code.index(s) for s in steps]
+    assert positions == sorted(positions)  # consent default before config, gtag.js loaded last
+    consent = code[code.index('gtag("consent"') : code.index('gtag("js"')]
+    for key in ("analytics_storage", "ad_storage", "ad_user_data", "ad_personalization"):
+        assert f'{key}: "denied"' in consent, key
+    assert "page_location: location.origin + location.pathname" in code
+    assert "anonymize_ip: true" in code
+    for leak in ("location.href", "location.hash", "location.search", "cookie"):
+        assert leak not in code, leak
+
+
+async def test_analytics_script_is_served(client: Any) -> None:
+    resp = await client.get("/static/analytics.js")
+    assert resp.status == 200
+    assert "javascript" in resp.headers["Content-Type"]
+
+
+def test_page_without_placeholder_fails_at_startup(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(web_app, "STATIC", tmp_path)
+    with pytest.raises(RuntimeError, match="placeholder"):
+        web_app._analytics_page("index.html", GA_ID)  # pyright: ignore[reportPrivateUsage]

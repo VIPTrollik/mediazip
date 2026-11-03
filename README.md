@@ -63,6 +63,13 @@ sends no CORS headers for documents and similar files (images and videos get
 `Access-Control-Allow-Origin: *`), so the browser can't fetch them and the download page
 reports them as failed. Embeds (link previews, GIFs) only ever count as images or videos.
 
+`GA_MEASUREMENT_ID` (default unset: no analytics) turns on Google Analytics 4 for the
+landing, privacy and terms pages only, in cookieless Consent Mode (all storage denied, no
+banner needed). The server then adds a `ga-id` meta tag and `/static/analytics.js` to those
+three pages and widens their CSP for Google's hosts; the download page `/d`, whose URL
+fragment holds the link token, the API and the install page never load it. The privacy page
+already discloses it.
+
 `TRUSTED_PROXIES` (default `127.0.0.1/32`) lists the peers whose `X-Forwarded-For` header
 is believed, for per-client rate limiting. With nginx on the host the container sees the
 Docker bridge gateway as the peer. `docker-compose.yml` uses a fixed `zipbot` network with
