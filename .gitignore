@@ -13,3 +13,4 @@ build/
 dist/
 .env.*
 !.env.example
+.claude/

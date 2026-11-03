@@ -5,12 +5,14 @@ services:
     env_file: .env
     environment:
       # Only the network gateway (what the host's nginx connects from) may set X-Forwarded-For.
-      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,172.30.88.1}
+      TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,${COMPOSE_GATEWAY:-172.30.88.1}}
     networks:
       - zipbot
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8080:8080"  # only nginx on the host reaches it
+      # Only nginx on the host reaches it. HOST_PORT (default 8080) picks the host side, e.g.
+      # 8090 where 8080 is taken; the container always listens on 8080.
+      - "127.0.0.1:${HOST_PORT:-8080}:8080"
     read_only: true
     tmpfs:
       - /tmp
@@ -26,9 +28,12 @@ services:
         max-size: "10m"
         max-file: "3"
 
+# A fixed subnet, so TRUSTED_PROXIES can name its gateway. Set COMPOSE_SUBNET and
+# COMPOSE_GATEWAY (in .env or the shell) if 172.30.88.0/24 clashes with another network;
+# TRUSTED_PROXIES follows COMPOSE_GATEWAY unless set itself.
 networks:
   zipbot:
     ipam:
       config:
-        - subnet: 172.30.88.0/24
-          gateway: 172.30.88.1
+        - subnet: ${COMPOSE_SUBNET:-172.30.88.0/24}
+          gateway: ${COMPOSE_GATEWAY:-172.30.88.1}

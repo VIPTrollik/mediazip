@@ -24,15 +24,16 @@ only. Details: [PLAN.md](PLAN.md).
 
 - A Discord application with a bot (setup below).
 - Docker + Docker Compose.
-- A public HTTPS hostname. The container only listens on `127.0.0.1:8080`; put your own
-  reverse proxy with TLS in front (example for nginx + certbot in
-  [deploy/nginx.conf.example](deploy/nginx.conf.example)).
+- A public HTTPS hostname (production: `mediazip.download`). The container is published on
+  `127.0.0.1:8080` only (`HOST_PORT` changes the port); put your own reverse proxy with TLS
+  in front (example for nginx + certbot in [deploy/nginx.conf.example](deploy/nginx.conf.example)).
 
 ## 1. Discord Developer Portal
 
 1. <https://discord.com/developers/applications> → **New Application**.
-2. **General Information:** set *Terms of Service URL* to `https://<host>/terms` and
-   *Privacy Policy URL* to `https://<host>/privacy`.
+2. **General Information:** name `MediaZip`; set *Terms of Service URL* to
+   `https://mediazip.download/terms` and *Privacy Policy URL* to
+   `https://mediazip.download/privacy` (`https://<host>/…` for another host).
 3. **Bot:** **Reset Token** and copy it (this is `DISCORD_TOKEN`). *Public Bot* on,
    *Requires OAuth2 Code Grant* off. **All three Privileged Gateway Intents off** — the app
    doesn't need them.
@@ -50,7 +51,8 @@ server and DM, even where the bot isn't a member) and/or *Add to Server*.
 
 ```sh
 cp .env.example .env
-# edit .env: DISCORD_TOKEN=..., PUBLIC_BASE_URL=https://dl.example.com
+# edit .env: DISCORD_TOKEN=..., PUBLIC_BASE_URL=https://mediazip.download
+# (local dev: PUBLIC_BASE_URL=http://localhost:8080)
 ```
 
 All settings and defaults are listed in [.env.example](.env.example). The app refuses to
@@ -72,10 +74,21 @@ already discloses it.
 
 `TRUSTED_PROXIES` (default `127.0.0.1/32`) lists the peers whose `X-Forwarded-For` header
 is believed, for per-client rate limiting. With nginx on the host the container sees the
-Docker bridge gateway as the peer. `docker-compose.yml` uses a fixed `zipbot` network with
-gateway `172.30.88.1` and sets `TRUSTED_PROXIES=127.0.0.1,172.30.88.1` for you. Other Docker
-setups must set it to their own bridge gateway (`docker network inspect <network>`);
-otherwise all clients share one rate-limit bucket.
+Docker bridge gateway as the peer. `docker-compose.yml` uses a fixed `zipbot` network,
+by default subnet `172.30.88.0/24` with gateway `172.30.88.1`, and sets
+`TRUSTED_PROXIES=127.0.0.1,<gateway>` for you. Other Docker setups must set it to their own
+bridge gateway (`docker network inspect <network>`); otherwise all clients share one
+rate-limit bucket.
+
+Compose-only settings, read from the same `.env` (or the shell) when `docker compose` runs:
+
+- `HOST_PORT` (default `8080`): the host port, always bound to `127.0.0.1`. Use e.g. `8090`
+  if 8080 is taken, and point nginx there.
+- `COMPOSE_SUBNET` / `COMPOSE_GATEWAY` (defaults `172.30.88.0/24` / `172.30.88.1`): the
+  network's fixed subnet, for hosts where it overlaps another Docker network ("Pool overlaps
+  with other one on this address space"; `docker network inspect $(docker network ls -q)
+  --format '{{.Name}} {{range .IPAM.Config}}{{.Subnet}}{{end}}'` lists the taken ones).
+  Change both together; `TRUSTED_PROXIES` follows the gateway unless you set it yourself.
 
 ## 3. Run
 
@@ -85,7 +98,7 @@ docker compose ps          # STATUS shows (healthy) after ~20 s
 docker compose logs -f     # "synced 3 global commands", "gateway ready"
 ```
 
-Then point your reverse proxy at `http://127.0.0.1:8080` and check
+Then point your reverse proxy at `http://127.0.0.1:${HOST_PORT}` (8080 by default) and check
 `https://<host>/healthz` → `{"status": "ok"}`. Slash commands and context menus appear in
 Discord within a minute; restart the Discord app if they don't.
 
@@ -93,6 +106,35 @@ Update: `git pull && docker compose up -d --build`. Links and ZIPs (baskets) are
 (they are short-lived by design). When a command changed (e.g. "Download attachments" is
 "Download media" again since media became the scope), the bot re-syncs on start; restart the
 Discord app if the old name still shows.
+
+### Deploy on mediazip.download
+
+The image builds natively on amd64 and arm64 Linux hosts with Docker
+(the base image and every locked wheel have arm64 builds).
+
+1. DNS: `A` (and `AAAA`, if the server has IPv6) records for `mediazip.download` → the server.
+2. `git clone <repo> ~/mediazip && cd ~/mediazip`, then `cp .env.example .env` and set:
+
+   ```sh
+   DISCORD_TOKEN=...
+   PUBLIC_BASE_URL=https://mediazip.download
+   GA_MEASUREMENT_ID=G-Z8VRMRQ3X4
+   HOST_PORT=8090
+   # only if 172.30.88.0/24 is already used by another network:
+   # COMPOSE_SUBNET=172.30.89.0/24
+   # COMPOSE_GATEWAY=172.30.89.1
+   ```
+
+3. `sudo docker compose up -d --build`, then `sudo docker compose ps` (healthy) and
+   `curl -s http://127.0.0.1:8090/healthz`.
+4. nginx: copy the server blocks from [deploy/nginx.conf.example](deploy/nginx.conf.example)
+   (`server_name mediazip.download`, `proxy_pass http://127.0.0.1:8090`), create
+   `/etc/nginx/zipbot_proxy.conf` as shown at its end, `sudo nginx -t && sudo systemctl reload
+   nginx`, then `sudo certbot --nginx -d mediazip.download`.
+5. Check `https://mediazip.download/healthz`, and in the Developer Portal set the Terms URL
+   `https://mediazip.download/terms` and the Privacy URL `https://mediazip.download/privacy`.
+6. Stop any other copy of the bot (e.g. a local one) once this one is up: both would receive
+   every command and DM, and links made by one don't exist in the other's memory.
 
 ### If the token leaks
 

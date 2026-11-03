@@ -1,12 +1,14 @@
-# Example server block for the zipbot container behind nginx + certbot.
-# Replace dl.example.com; certbot fills in the ssl_certificate lines.
+# Example server block for the zipbot container (MediaZip) behind nginx + certbot.
+# For another host, replace mediazip.download. `certbot --nginx -d mediazip.download` fills in
+# the ssl_certificate lines. The upstream port is HOST_PORT from .env (8090 in production;
+# docker-compose.yml defaults to 8080).
 
 limit_req_zone $binary_remote_addr zone=zipbot_api:10m rate=30r/m;
 server_tokens off;  # http context: applies to every server block, incl. the :80 redirect
 
 server {
     listen 80;
-    server_name dl.example.com;
+    server_name mediazip.download;
     location /.well-known/acme-challenge/ { root /var/www/certbot; }
     location / { return 301 https://$host$request_uri; }
 }
@@ -14,10 +16,10 @@ server {
 server {
     listen 443 ssl;
     http2 on;
-    server_name dl.example.com;
+    server_name mediazip.download;
 
-    # ssl_certificate     /etc/letsencrypt/live/dl.example.com/fullchain.pem;
-    # ssl_certificate_key /etc/letsencrypt/live/dl.example.com/privkey.pem;
+    # ssl_certificate     /etc/letsencrypt/live/mediazip.download/fullchain.pem;
+    # ssl_certificate_key /etc/letsencrypt/live/mediazip.download/privkey.pem;
 
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     client_max_body_size 1k;
@@ -29,12 +31,12 @@ server {
     location /api/ {
         limit_req zone=zipbot_api burst=10 nodelay;
         limit_req_status 429;
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:8090;  # HOST_PORT
         include /etc/nginx/zipbot_proxy.conf;
     }
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:8090;  # HOST_PORT
         include /etc/nginx/zipbot_proxy.conf;
     }
 }
