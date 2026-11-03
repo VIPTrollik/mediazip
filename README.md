@@ -163,5 +163,5 @@ Code layout:
 
 ## License
 
-TBD. The vendored [client-zip](https://github.com/Touffy/client-zip) is MIT-licensed; see
+[MIT](LICENSE). The vendored [client-zip](https://github.com/Touffy/client-zip) is MIT-licensed; see
 [src/zipbot/web/static/VENDOR.md](src/zipbot/web/static/VENDOR.md).

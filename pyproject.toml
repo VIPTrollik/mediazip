@@ -14,6 +14,10 @@ dependencies = [
     "pydantic-settings==2.16.0",
 ]
 
+[project.urls]
+Homepage = "https://mediazip.download"
+Source = "https://github.com/VIPTrollik/mediazip"
+
 [project.optional-dependencies]
 dev = [
     "pytest==9.1.1",
