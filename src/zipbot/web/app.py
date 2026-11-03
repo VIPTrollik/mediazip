@@ -15,6 +15,7 @@ from typing import Protocol
 from urllib.parse import quote, urlencode
 
 from aiohttp import web
+from aiohttp.web_fileresponse import CONTENT_TYPES as STATIC_CONTENT_TYPES
 
 from zipbot.config import Settings
 from zipbot.contract import resolve_body
@@ -22,7 +23,9 @@ from zipbot.store import Store
 
 STATIC = Path(__file__).parent / "static"
 # The slim container image has no /etc/mime.types, and with nosniff a mislabelled image may not render.
+# aiohttp's static route guesses from its own table, built at import, so register it there too.
 mimetypes.add_type("image/webp", ".webp")
+STATIC_CONTENT_TYPES.add_type("image/webp", ".webp")
 # The source code link on the landing, privacy and terms pages (their `{{REPO_URL}}`).
 REPO_URL = "https://github.com/VIPTrollik/mediazip"
 FAVICON = STATIC / "brand" / "favicon.ico"
