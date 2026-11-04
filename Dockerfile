@@ -9,6 +9,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin zipbot
+# STATS_PATH's directory (docker-compose.yml mounts a named volume here). A new, empty named
+# volume takes this directory's owner and mode, so the non-root user can write to it.
+RUN mkdir /data && chown zipbot:zipbot /data && chmod 700 /data
 
 WORKDIR /app
 COPY requirements.lock ./

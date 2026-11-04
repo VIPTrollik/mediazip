@@ -555,3 +555,25 @@ async def test_landing_link_preview_follows_public_base_url(
 def test_render_page_fills_and_escapes() -> None:
     out = web_app.render_page('<a href="{{REPO_URL}}"></a><img src="{{BASE_URL}}/x">', 'https://a.example/"')
     assert out == f'<a href="{web_app.REPO_URL}"></a><img src="https://a.example/&quot;/x">'
+
+
+async def test_resolve_counts_opens_misses_and_429(
+    aiohttp_client: Any, settings: Settings, store: Store
+) -> None:
+    client = await aiohttp_client(create_app(settings.model_copy(update={"resolve_rate_per_min": 4}), store))
+    token, _ = store.create_link(1, [item()])
+    assert (await client.post("/api/resolve", json={"token": token})).status == 200
+    assert (await client.post("/api/resolve", json={"token": "x" * 43})).status == 404
+    assert (await client.post("/api/resolve", json={"token": "short"})).status == 404  # malformed: not a miss
+    await client.get("/")  # page hits aren't counted
+    await client.get("/healthz")
+    assert (await client.post("/api/resolve", json={"token": token})).status == 200
+    assert (await client.post("/api/resolve", json={"token": token})).status == 429
+    counts = store.stats.days[store.stats.today()]
+    assert dict(counts) == {
+        "links_created": 1,
+        "files_linked": 1,
+        "link_opens": 2,
+        "link_misses": 1,
+        "rate_limited": 1,
+    }

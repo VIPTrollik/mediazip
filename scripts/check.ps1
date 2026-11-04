@@ -1,7 +1,7 @@
 # G-auto gate (PLAN.md §12): lint, format, types, tests + coverage. Run from the repo root.
 $ErrorActionPreference = "Stop"
 $py = Join-Path $PSScriptRoot "..\.venv\Scripts\python.exe"
-$covModules = @("media", "naming", "store") | ForEach-Object { Join-Path "src\zipbot" "$_.py" } | Where-Object { Test-Path $_ }
+$covModules = @("media", "naming", "stats", "store") | ForEach-Object { Join-Path "src\zipbot" "$_.py" } | Where-Object { Test-Path $_ }
 
 function Step($name, [scriptblock]$cmd) {
     Write-Host "== $name"

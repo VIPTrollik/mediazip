@@ -1,7 +1,7 @@
 """In-memory TTL store: download links and baskets (PLAN.md §4, §6).
 
 Tokens are bearer secrets: only `sha256(token)` is kept. Everything is lost on restart,
-which is fine for links that live ≤ 60 minutes.
+which is fine for links that live ≤ 60 minutes. Only aggregate counters (`stats`) outlive it.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from enum import Enum
 from zipbot.config import Settings
 from zipbot.media import MediaItem
 from zipbot.naming import assign_names
+from zipbot.stats import Stats
 
 CDN_SAFETY_SEC = 5 * 60  # links die this long before the first CDN URL does
 MIN_LINK_SEC = 60
@@ -97,6 +98,7 @@ class Store:
         basket_max_messages: int,
         max_active_links_per_user: int,
         clock: Callable[[], float] = time.time,
+        stats: Stats | None = None,
     ) -> None:
         self.link_ttl_sec = link_ttl_sec
         self.basket_ttl_sec = basket_ttl_sec
@@ -104,6 +106,8 @@ class Store:
         self.basket_max_messages = basket_max_messages
         self.max_active_links_per_user = max_active_links_per_user
         self.clock = clock
+        # Usage counters, shared with the bot and the web app (AppState.stats, STATS_KEY).
+        self.stats = Stats() if stats is None else stats
         self._links: OrderedDict[str, LinkRecord] = OrderedDict()  # token hash → record, oldest first
         self._items = 0  # sum of len(record.items) over _links
         self._baskets: dict[int, Basket] = {}
@@ -112,13 +116,14 @@ class Store:
         self.on_basket_link_gone: Callable[[int], None] | None = None
 
     @classmethod
-    def from_settings(cls, settings: Settings) -> Store:
+    def from_settings(cls, settings: Settings, stats: Stats | None = None) -> Store:
         return cls(
             link_ttl_sec=settings.link_ttl_min * 60,
             basket_ttl_sec=settings.basket_ttl_min * 60,
             max_files_per_link=settings.max_files_per_link,
             basket_max_messages=settings.basket_max_messages,
             max_active_links_per_user=settings.max_active_links_per_user,
+            stats=stats,
         )
 
     # --- links -------------------------------------------------------------------------
@@ -172,6 +177,8 @@ class Store:
         )
         self._links[token_hash(token)] = record
         self._items += len(record.items)
+        self.stats.record("links_created")  # every link, ZIP links included (basket_link)
+        self.stats.record("files_linked", len(record.items))
         return token, record
 
     def _drop(self, h: str) -> None:

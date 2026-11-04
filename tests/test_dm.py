@@ -314,3 +314,15 @@ async def test_bursts_are_rate_limited_with_one_notice(cog: DmCog) -> None:
     await cog.on_message(dm(other, 9, files=attachments(1), user=8))  # per user
     await settle(cog)
     assert len(other.sent) == 1 and other.sent[0][1] is not None
+
+
+async def test_burst_is_counted_once(cog: DmCog) -> None:
+    ch = Channel()
+    for n in range(3):
+        await cog.on_message(dm(ch, 100 + n, forward=attachments(2)))
+    await cog.on_message(dm(Channel(), 200, files=attachments(1), user=8))
+    await settle(cog)
+    stats = cog.bot.stats
+    counts = stats.days[stats.today()]
+    assert counts["dm_burst"] == 2 and counts["users"] == 2
+    assert counts["links_created"] == 2 and counts["files_linked"] == 7

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from ipaddress import IPv4Network, IPv6Network, ip_network
+from pathlib import Path
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
@@ -41,6 +42,8 @@ class Settings(BaseSettings):
         ip_network("127.0.0.1/32"),
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    # Where the daily usage counters are saved (zipbot.stats); unset: kept in memory only.
+    stats_path: Path | None = None
 
     @field_validator("public_base_url")
     @classmethod
@@ -53,10 +56,10 @@ class Settings(BaseSettings):
             raise ValueError("must be a bare origin/base path, without query or fragment")
         return v.rstrip("/")
 
-    @field_validator("discord_application_id", mode="before")
+    @field_validator("discord_application_id", "stats_path", mode="before")
     @classmethod
-    def _optional_id(cls, v: object) -> object:
-        return None if isinstance(v, str) and not v.strip() else v  # `DISCORD_APPLICATION_ID=` means unset
+    def _optional(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v  # `KEY=` means unset
 
     @field_validator("media_types", mode="before")
     @classmethod

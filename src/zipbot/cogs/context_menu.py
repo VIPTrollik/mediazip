@@ -46,12 +46,14 @@ class ContextMenus(commands.Cog):
 
     @per_user_cooldown
     async def download(self, interaction: discord.Interaction, message: discord.Message) -> None:
+        self.bot.stats.record("download_media", user_id=interaction.user.id)
         payload = handlers.interaction_payload(interaction, message)
         reply = handlers.download_reply(self.bot, interaction.user.id, payload, handlers.message_key(message))
         await views.show(interaction, reply)
 
     @per_user_cooldown
     async def add(self, interaction: discord.Interaction, message: discord.Message) -> None:
+        self.bot.stats.record("add_to_zip", user_id=interaction.user.id)
         payload = handlers.interaction_payload(interaction, message)
         reply = handlers.add_to_basket_reply(
             self.bot, interaction.user.id, payload, handlers.message_key(message)

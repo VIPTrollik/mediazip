@@ -57,7 +57,9 @@ def settings(settings: Settings) -> Settings:
 def state(settings: Settings) -> Any:
     store = Store.from_settings(settings)
     store.clock = lambda: EX - 24 * 3600
-    ns = SimpleNamespace(store=store, settings=settings, panels=Panels(), button_cooldown=UserCooldown())
+    ns = SimpleNamespace(
+        store=store, stats=store.stats, settings=settings, panels=Panels(), button_cooldown=UserCooldown()
+    )
     ns.dm_baskets = DmBaskets(cast(Any, ns))
     return ns
 
@@ -991,3 +993,64 @@ async def test_add_on_an_older_panel_keeps_the_live_basket_link(state: Any) -> N
     await RevokeButton(old_record.link_id).callback(on_live)
     assert basket_zip_url(on_live.response.edit_message.call_args.kwargs["view"])  # the live one mints
     await drain()
+
+
+# --- usage counters ------------------------------------------------------------------
+
+
+def today(state: Any) -> dict[str, int]:
+    return dict(state.stats.days.get(state.stats.today(), {}))
+
+
+async def test_context_menus_count_actions_and_users(settings: Settings, state: Any) -> None:
+    from zipbot.cogs.context_menu import ContextMenus
+
+    bot = ZipBot(settings, state.store)
+    assert bot.stats is state.stats
+    cog = ContextMenus(bot)
+    raw = media_payload()
+    msg = cast(Any, SimpleNamespace(id=int(raw["id"]), channel=SimpleNamespace(id=5)))
+    data = {"resolved": {"messages": {raw["id"]: raw}}}
+    await cog.download(interaction(bot, data=data), msg)
+    await cog.download(interaction(bot, data=data, user_id=8), msg)
+    await cog.add(interaction(bot, data=data), msg)
+    await drain()
+    counts = today(state)
+    assert counts["download_media"] == 2 and counts["add_to_zip"] == 1
+    assert counts["users"] == 2
+    assert counts["links_created"] >= 2 and counts["files_linked"] >= 10  # 5 files per link
+    await bot.close()
+
+
+async def test_basket_cog_counts_subcommands(settings: Settings, state: Any) -> None:
+    from zipbot.cogs.basket import BasketCog
+
+    bot = ZipBot(settings, state.store)
+    cog = BasketCog(bot)
+    state.store.add_to_basket(7, "k", [item()])
+    for name in ("show", "link", "link", "clear"):
+        await getattr(cog, name).callback(cog, interaction(bot))
+    counts = today(state)
+    assert (counts["zip_show"], counts["zip_link"], counts["zip_clear"], counts["users"]) == (1, 2, 1, 1)
+    await bot.close()
+
+
+def test_no_media_is_counted(state: Any) -> None:
+    payload = resolved_message(fixture("interaction_context_menu_no_media.json"))
+    handlers.download_reply(state, 7, payload, "k")
+    handlers.add_to_basket_reply(state, 7, payload, "k")
+    assert today(state) == {"no_media": 2}  # handlers count outcomes; the cogs count the actions
+
+
+def test_links_and_files_counted_once_per_link(state: Any) -> None:
+    state.store.create_link(7, [item("a.jpg"), item("b.jpg"), item("c.jpg")])
+    state.store.add_to_basket(7, "k", [item("d.jpg"), item("e.jpg")])
+    state.store.basket_link(7)  # a ZIP link counts too
+    assert today(state) == {"links_created": 2, "files_linked": 5}
+
+
+async def test_revoke_is_counted(state: Any) -> None:
+    view, record = link_of(state)
+    await RevokeButton(record.link_id).callback(interaction(state, message=message_of(view)))
+    counts = today(state)
+    assert counts["revoke"] == 1 and counts["users"] == 1

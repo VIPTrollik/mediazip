@@ -29,14 +29,17 @@
 
     <h2>What is stored, and for how long</h2>
     <ul>
-      <li><b>In memory only, never on disk:</b> for each link — your Discord user ID, the Discord CDN addresses, file names,
+      <li><b>In memory only, never on disk:</b> for each link: your Discord user ID, the Discord CDN addresses, file names,
         sizes and dimensions of the media, and a one-way hash of the link's secret. Links expire after at most 60 minutes
         (sooner if Discord's file links expire first) and can be revoked at any time with <b>Revoke link</b>.</li>
       <li><b>Your ZIP</b> (<b>Add to ZIP</b>): the same kind of data for the messages you add, kept for 60 minutes after
         your last change, or until you clear it. The bot shows your ZIP in one message in its DM with you; clearing it
         deletes that message, and when it expires the message is edited to "Your ZIP expired", without links, previews
         or file names. A message left over from a restart is cleaned up the next time you use Add to ZIP or <code>/zip</code>.</li>
-      <li>Everything is deleted when it expires or when the service restarts.</li>
+      <li>All of the above is deleted when it expires or when the service restarts.</li>
+      <li><b>Usage statistics:</b> daily totals of how often each feature is used and how many links were created and
+        opened, plus the number of distinct users per day as a single number. No user IDs, IP addresses, file names or
+        links are saved with them.</li>
     </ul>
 
     <h2>What is not stored</h2>

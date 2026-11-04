@@ -73,6 +73,7 @@ async def env(settings: Settings) -> AsyncIterator[Any]:
     store.clock = clock
     ns = SimpleNamespace(
         store=store,
+        stats=store.stats,
         settings=settings,
         panels=Panels(),
         button_cooldown=UserCooldown(),

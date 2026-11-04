@@ -30,6 +30,7 @@ from discord import app_commands
 from zipbot.config import Settings
 from zipbot.contract import thumbnail
 from zipbot.media import FILE_KIND, MediaItem, is_allowed_url
+from zipbot.stats import Stats
 from zipbot.store import AddResult, Basket, LinkError, LinkRecord, Store
 
 if TYPE_CHECKING:
@@ -114,6 +115,7 @@ Reply = Panel | Toast | DmPost
 
 class AppState(Protocol):
     store: Store
+    stats: Stats
     settings: Settings
     panels: Panels
     button_cooldown: UserCooldown
@@ -774,6 +776,7 @@ class RevokeButton(
 
     async def callback(self, interaction: discord.Interaction) -> None:
         state = app(interaction)
+        state.stats.record("revoke", user_id=interaction.user.id)
         revoked = state.store.revoke(self.link_id, interaction.user.id)
         note = REVOKED if revoked else LINK_GONE
         reply = link_panel(

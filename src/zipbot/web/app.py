@@ -19,6 +19,7 @@ from aiohttp.web_fileresponse import CONTENT_TYPES as STATIC_CONTENT_TYPES
 
 from zipbot.config import Settings
 from zipbot.contract import resolve_body
+from zipbot.stats import Stats
 from zipbot.store import Store
 
 STATIC = Path(__file__).parent / "static"
@@ -82,6 +83,7 @@ log = logging.getLogger(__name__)
 
 SETTINGS_KEY = web.AppKey("settings", Settings)
 STORE_KEY = web.AppKey("store", Store)
+STATS_KEY = web.AppKey("stats", Stats)
 # Returns the application id for /install, or None while it is not known yet.
 APPLICATION_ID_KEY = web.AppKey[Callable[[], int | None]]("application_id")
 UNAVAILABLE_KEY = web.AppKey("install_unavailable", bytes)  # the /install 503 page
@@ -174,7 +176,9 @@ async def security_headers(request: web.Request, handler: Handler) -> web.Stream
 
 
 async def resolve(request: web.Request) -> web.Response:
+    stats = request.app[STATS_KEY]
     if not request.app[LIMITER_KEY].allow(client_ip(request, request.app[SETTINGS_KEY])):
+        stats.record("rate_limited")
         return web.json_response({"error": "rate_limited"}, status=429, headers={"Retry-After": "60"})
     if request.content_type != "application/json":
         return web.json_response({"error": "bad_request"}, status=415)
@@ -187,7 +191,9 @@ async def resolve(request: web.Request) -> web.Response:
         return web.json_response(NOT_FOUND, status=404)
     record = request.app[STORE_KEY].resolve(token)
     if record is None:
+        stats.record("link_misses")  # well-formed but unknown, expired or revoked
         return web.json_response(NOT_FOUND, status=404)
+    stats.record("link_opens")
     return web.json_response(resolve_body(record))
 
 
@@ -286,6 +292,7 @@ def create_app(
     app = web.Application(middlewares=[security_headers], client_max_size=4096)
     app[SETTINGS_KEY] = settings
     app[STORE_KEY] = store
+    app[STATS_KEY] = store.stats
     app[LIMITER_KEY] = RateLimiter(settings.resolve_rate_per_min)
     app[APPLICATION_ID_KEY] = application_id or ApplicationId(settings.discord_application_id)
     app[UNAVAILABLE_KEY] = (STATIC / "install-unavailable.html").read_bytes()

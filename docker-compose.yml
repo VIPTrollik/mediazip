@@ -6,6 +6,8 @@ services:
     environment:
       # Only the network gateway (what the host's nginx connects from) may set X-Forwarded-For.
       TRUSTED_PROXIES: ${TRUSTED_PROXIES:-127.0.0.1,${ZIPBOT_GATEWAY:-172.30.88.1}}
+      # Daily usage counters only (no ids, IPs or names); see README "Usage statistics".
+      STATS_PATH: /data/stats.json
     networks:
       - zipbot
     restart: unless-stopped
@@ -16,6 +18,8 @@ services:
     read_only: true
     tmpfs:
       - /tmp
+    volumes:
+      - zipbot-data:/data  # the only writable path besides /tmp
     cap_drop:
       - ALL
     security_opt:
@@ -27,6 +31,9 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+volumes:
+  zipbot-data:
 
 # A fixed subnet, so TRUSTED_PROXIES can name its gateway. Set ZIPBOT_SUBNET and
 # ZIPBOT_GATEWAY (in .env or the shell) if 172.30.88.0/24 clashes with another network;

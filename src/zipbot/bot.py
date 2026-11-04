@@ -11,6 +11,7 @@ from discord.ext import commands
 
 from zipbot.config import Settings
 from zipbot.dm_basket import DmBaskets
+from zipbot.stats import Stats
 from zipbot.store import Store
 from zipbot.views import COOLDOWN_TEXT, DYNAMIC_ITEMS, Panels, UserCooldown
 
@@ -64,6 +65,7 @@ class ZipBot(commands.Bot):
         )
         self.settings = settings
         self.store = store
+        self.stats: Stats = store.stats
         self.panels = Panels()  # each user's one live reply panel
         self.button_cooldown = UserCooldown()
         self.dm_baskets = DmBaskets(self)  # each user's basket message in the bot DM

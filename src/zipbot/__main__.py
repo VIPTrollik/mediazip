@@ -14,6 +14,7 @@ from pydantic import ValidationError
 
 from zipbot.bot import ZipBot
 from zipbot.config import Settings
+from zipbot.stats import FLUSH_INTERVAL_SEC, Stats
 from zipbot.store import Store
 from zipbot.web.app import ApplicationId, create_app
 
@@ -30,6 +31,12 @@ async def sweeper(store: Store) -> None:
             log.debug("swept %d expired records", removed)
 
 
+async def stats_saver(stats: Stats) -> None:
+    while True:
+        await asyncio.sleep(FLUSH_INTERVAL_SEC)
+        stats.flush()
+
+
 async def check_application_id(bot: discord.Client, app_id: ApplicationId) -> None:
     """Once the bot is logged in, warn if DISCORD_APPLICATION_ID names another application."""
     await bot.wait_until_ready()
@@ -37,7 +44,8 @@ async def check_application_id(bot: discord.Client, app_id: ApplicationId) -> No
 
 
 async def run(settings: Settings) -> None:
-    store = Store.from_settings(settings)
+    stats = Stats.load(settings.stats_path)  # aggregate counters only; see zipbot.stats
+    store = Store.from_settings(settings, stats=stats)
     app_id = ApplicationId(settings.discord_application_id)  # the bot's own id once it has logged in
     app = create_app(settings, store, application_id=app_id)
     runner = web.AppRunner(app, access_log=None)  # access log would only add noise
@@ -52,6 +60,7 @@ async def run(settings: Settings) -> None:
             loop.add_signal_handler(sig, stop.set)
 
     sweep_task = asyncio.create_task(sweeper(store))
+    stats_task = asyncio.create_task(stats_saver(stats))
     try:
         async with ZipBot(settings, store) as bot:
             app_id.bot = bot
@@ -66,7 +75,9 @@ async def run(settings: Settings) -> None:
             log.info("shutting down")
     finally:
         sweep_task.cancel()
+        stats_task.cancel()
         await runner.cleanup()
+        stats.flush()  # the counters since the last save
 
 
 def configure_logging(level: str) -> None:

@@ -71,6 +71,7 @@ def link_reply(
 def download_reply(state: AppState, user_id: int, payload: Mapping[str, Any], key: str) -> Panel:
     items = extract(payload, kinds=_kinds(state))
     if not items:
+        state.stats.record("no_media")
         return nothing_to_download(state.settings, "This")
     return link_reply(state, user_id, items, key)
 
@@ -86,6 +87,8 @@ def burst_reply(
 def add_to_basket_reply(state: AppState, user_id: int, payload: Mapping[str, Any], key: str) -> Reply:
     items = extract(payload, kinds=_kinds(state))
     result, _ = state.store.add_to_basket(user_id, key, items)
+    if result is AddResult.EMPTY:
+        state.stats.record("no_media")
     if result is AddResult.ADDED:
         state.dm_baskets.changed(user_id)  # posts or edits the DM basket message
     note = basket_note(state.settings, result, len(items))

@@ -128,6 +128,7 @@ class DmCog(commands.Cog):
         # cancelling this one halfway through sending.
         if self.pending.get(user_id) is burst:
             del self.pending[user_id]
+        self.bot.stats.record("dm_burst", user_id=user_id)
         reply = handlers.burst_reply(self.bot, user_id, burst.items, burst.messages, burst.offered)
         try:
             if isinstance(reply, str):

@@ -48,13 +48,19 @@ browser can't fetch those files, so they're left out. Self-hosters can opt in to
 - **The server never handles file bytes.** The bot stores Discord's signed CDN URLs. Your
   browser downloads the files directly from `cdn.discordapp.com` / `media.discordapp.net`,
   without cookies or a referrer, and builds the ZIP on your device.
-- **Everything is kept in memory only.** The server stores nothing on disk, and a restart
-  clears it all. It holds:
+- **Links and ZIPs are kept in memory only.** They are never written to disk, and a restart
+  clears them all. The server holds:
   - for each link: your Discord user id, the files' CDN URLs, names and sizes, and the expiry
     time;
   - for your ZIP: the same data per added message, plus the id of the DM message that shows it;
   - for the API rate limiter: the client IP address (or IPv6 /64), with the times of the last
     minute's requests. Up to the 10 000 most recently seen clients are kept.
+
+  The only thing saved to disk is a set of aggregate daily counters, and only when
+  `STATS_PATH` is set (mediazip.download sets it): how often each feature was used, how many
+  links were created and opened, and the number of distinct users that day as a single number.
+  No user ids, IP addresses, tokens, links or file names are saved with them. The user ids
+  behind that day's count stay in memory only and are dropped at midnight UTC or on restart.
 
   On mediazip.download, Cloudflare's proxy sits in front of nginx, which sits in front of the
   app. Cloudflare terminates TLS, so it handles every request and response (not the files,
@@ -114,6 +120,7 @@ cp .env.example .env
 | `MEDIA_TYPES` | `image,video` | Any of `image`, `video` and `audio`, or `all` |
 | `BASKET_DM` | `true` | Keep your ZIP as a DM message. With `false`, it appears in reply panels only. |
 | `MAX_ACTIVE_LINKS_PER_USER`, `RESOLVE_RATE_PER_MIN`, `DM_DEBOUNCE_SEC` | see `.env.example` | Abuse limits |
+| `STATS_PATH` | unset | A file for the daily usage counters (see [Usage statistics](#usage-statistics)). Unset: they stay in memory. Compose sets `/data/stats.json`. |
 | `TRUSTED_PROXIES` | `127.0.0.1` | The peers whose `X-Forwarded-For` header is trusted. Compose adds its network gateway. |
 | `HOST_PORT`, `ZIPBOT_SUBNET`, `ZIPBOT_GATEWAY` | `8080`, `172.30.88.0/24`, `.1` | Compose settings: the host port and the network |
 
@@ -142,6 +149,23 @@ ZIPs, which are short-lived by design. Run only one instance per bot token.
 
 If the token leaks, choose **Reset Token** in the Developer Portal, update `.env`, and run
 `docker compose up -d`.
+
+### Usage statistics
+
+The bot counts, per UTC day, how often each command and button is used, how many links were
+created and opened, and how many distinct users did something (an approximate count: someone
+active both before and after a restart counts twice that day). Compose saves these counters to
+`/data/stats.json` in the `zipbot-data` volume every 60 seconds and on shutdown, keeping 400
+days. To see them:
+
+```sh
+docker compose exec zipbot python -m zipbot.stats            # the last 30 days and totals
+docker compose exec zipbot python -m zipbot.stats --days 90 --json
+```
+
+The report also shows Discord's approximate install counts (servers and users). The newest
+minute may be missing, since the bot saves once a minute. If the file is ever unreadable, the
+bot moves it aside to `stats.json.corrupt` and starts counting afresh.
 
 ## Development
 
