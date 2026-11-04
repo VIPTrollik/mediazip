@@ -56,8 +56,9 @@ browser can't fetch those files, so they're left out. Self-hosters can opt in to
   - for the API rate limiter: the client IP address (or IPv6 /64), with the times of the last
     minute's requests. Up to the 10 000 most recently seen clients are kept.
 
-  The reverse proxy in front of the app (nginx on mediazip.download) keeps its own access
-  log of IP addresses and paths.
+  On mediazip.download, Cloudflare's proxy sits in front of nginx, which sits in front of the
+  app. Cloudflare terminates TLS, so it handles every request and response (not the files,
+  which come straight from Discord). nginx keeps no access log.
 - **Links expire.** A link lasts 60 minutes by default (`LINK_TTL_MIN`), or less if Discord's
   CDN URLs expire sooner. You can revoke it with the **Revoke** button. Your ZIP expires after
   60 minutes without changes (`BASKET_TTL_MIN`), and its link goes with it.
@@ -72,13 +73,10 @@ browser can't fetch those files, so they're left out. Self-hosters can opt in to
   It only reads the messages you run it on, and the messages you send or forward to its DM.
   At the default log level, its own logs record error types, not file names, URLs or
   tokens.
-- **Analytics run only on the landing, privacy and terms pages**, and only when
-  `GA_MEASUREMENT_ID` is set, which mediazip.download does. They use Google Analytics 4 in
-  Consent Mode with all storage denied, so no cookies are set. The URL sent to Google has its
-  query and fragment removed. The download page and the API never load analytics.
-- **The web side is hardened.** It has a strict CSP (`self` only, except for analytics on the
-  pages above), `Referrer-Policy: no-referrer`, and per-IP rate limits on the API. The
-  container runs as a non-root user with a read-only filesystem and all capabilities dropped.
+- **There are no analytics, cookies or third-party scripts.** Every page loads only its own
+  scripts and styles.
+- **The web side is hardened.** It has a strict CSP (`self` only), `Referrer-Policy:
+  no-referrer`, and per-IP rate limits on the API. The container runs as a non-root user with a read-only filesystem and all capabilities dropped.
 
 The full policy is at [mediazip.download/privacy](https://mediazip.download/privacy).
 
@@ -117,7 +115,6 @@ cp .env.example .env
 | `BASKET_DM` | `true` | Keep your ZIP as a DM message. With `false`, it appears in reply panels only. |
 | `MAX_ACTIVE_LINKS_PER_USER`, `RESOLVE_RATE_PER_MIN`, `DM_DEBOUNCE_SEC` | see `.env.example` | Abuse limits |
 | `TRUSTED_PROXIES` | `127.0.0.1` | The peers whose `X-Forwarded-For` header is trusted. Compose adds its network gateway. |
-| `GA_MEASUREMENT_ID` | unset | Cookieless GA4 on `/`, `/privacy` and `/terms`. Leave it unset for no analytics. |
 | `HOST_PORT`, `ZIPBOT_SUBNET`, `ZIPBOT_GATEWAY` | `8080`, `172.30.88.0/24`, `.1` | Compose settings: the host port and the network |
 
 [.env.example](.env.example) lists every key. The app refuses to start if a value is invalid
@@ -132,8 +129,13 @@ docker compose ps        # shows "healthy" after about 20 seconds
 
 The container listens on `127.0.0.1:${HOST_PORT}` only, so put a TLS reverse proxy in front
 of it. [deploy/nginx.conf.example](deploy/nginx.conf.example) is a ready-made nginx site. It
-includes API rate limiting, and `certbot --nginx` adds HTTPS to it. Check that
-`https://<host>/healthz` returns `{"status": "ok"}`.
+includes API rate limiting, and `certbot --nginx` adds HTTPS to it. Behind Cloudflare's proxy,
+also include [deploy/cloudflare_realip.conf.example](deploy/cloudflare_realip.conf.example) so
+nginx sees the visitor's IP rather than Cloudflare's. Check that `https://<host>/healthz`
+returns `{"status": "ok"}`.
+
+The privacy policy ([privacy.html](src/zipbot/web/static/privacy.html)) describes
+mediazip.download's own setup (Cloudflare and nginx); adapt it to yours.
 
 To update, run `git pull && docker compose up -d --build`. A restart drops live links and
 ZIPs, which are short-lived by design. Run only one instance per bot token.

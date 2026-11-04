@@ -38,14 +38,14 @@ CDN_HOSTS = (
 _cdn = " ".join(CDN_HOSTS)
 
 
-def build_csp(*, script: str = "", connect: str = "", img: str = "") -> str:
-    """The one CSP template: every response's policy, plus extra sources for the analytics pages."""
+def build_csp() -> str:
+    """Every response's policy: same-origin only, plus Discord's CDN for media."""
     directives = {
         "default-src": "'self'",
-        "img-src": f"'self' blob: {_cdn} {img}",
+        "img-src": f"'self' blob: {_cdn}",
         "media-src": f"'self' blob: {_cdn}",
-        "connect-src": f"'self' {_cdn} {connect}",
-        "script-src": f"'self' {script}",
+        "connect-src": f"'self' {_cdn}",
+        "script-src": "'self'",
         "style-src": "'self'",
         "frame-ancestors": "'none'",
         "base-uri": "'none'",
@@ -55,21 +55,8 @@ def build_csp(*, script: str = "", connect: str = "", img: str = "") -> str:
 
 
 CSP = build_csp()
-# Google Analytics (GA_MEASUREMENT_ID) widens the CSP for "/", "/privacy" and "/terms" only, never for
-# /d (the link token is in its URL fragment) or the API. Hosts from Google's CSP guide, "Google
-# Analytics" without Ads features: https://developers.google.com/tag-platform/security/guides/csp
-# (checked 2026-11-03: script-src-elem www.googletagmanager.com; img-src www.googletagmanager.com
-# *.google-analytics.com; connect-src www.googletagmanager.com *.google-analytics.com
-# *.google.com), plus *.analytics.google.com for GA4's regional collection endpoints.
-GA_SCRIPT = "https://www.googletagmanager.com"
-GA_CONNECT = (
-    "https://*.google-analytics.com https://*.analytics.google.com https://www.googletagmanager.com "
-    "https://*.google.com"
-)
-GA_IMG = "https://*.google-analytics.com https://www.googletagmanager.com"
-ANALYTICS_CSP = build_csp(script=GA_SCRIPT, connect=GA_CONNECT, img=GA_IMG)
-ANALYTICS_PLACEHOLDER = "<!--analytics-->"
-ANALYTICS_PAGES = {"/": "index.html", "/privacy": "privacy.html", "/terms": "terms.html"}
+# Rendered once at startup (their `{{REPO_URL}}` and `{{BASE_URL}}` filled in).
+STATIC_PAGES = {"/": "index.html", "/privacy": "privacy.html", "/terms": "terms.html"}
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "Referrer-Policy": "no-referrer",
@@ -98,8 +85,6 @@ STORE_KEY = web.AppKey("store", Store)
 # Returns the application id for /install, or None while it is not known yet.
 APPLICATION_ID_KEY = web.AppKey[Callable[[], int | None]]("application_id")
 UNAVAILABLE_KEY = web.AppKey("install_unavailable", bytes)  # the /install 503 page
-# Set on a response that carries the Google Analytics tags: it gets ANALYTICS_CSP.
-ANALYTICS_KEY = web.ResponseKey("analytics", bool)
 
 Handler = Callable[[web.Request], Awaitable[web.StreamResponse]]
 
@@ -179,8 +164,6 @@ async def security_headers(request: web.Request, handler: Handler) -> web.Stream
         log.error("unhandled %s on %s %s", type(exc).__name__, request.method, request.path)
         response = web.json_response({"error": "internal"}, status=500)
     response.headers.update(SECURITY_HEADERS)
-    if not isinstance(response, web.HTTPException) and response.get(ANALYTICS_KEY):
-        response.headers["Content-Security-Policy"] = ANALYTICS_CSP
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     elif "Cache-Control" not in response.headers:
@@ -215,52 +198,25 @@ def _page(name: str) -> Handler:
     return handler
 
 
-def analytics_tags(measurement_id: str | None) -> str:
-    """What replaces a page's `<!--analytics-->`: nothing, or the id and the loader. No inline
-    script (the CSP forbids it): /static/analytics.js reads the id from the meta tag."""
-    if measurement_id is None:
-        return ""
-    return (
-        f'<meta name="ga-id" content="{html.escape(measurement_id)}">\n'
-        '<script src="/static/analytics.js" defer></script>'
-    )
-
-
-def render_page(source: str, measurement_id: str | None, base_url: str) -> str:
-    """Fill a page's placeholders: the analytics blocks, `{{REPO_URL}}` and `{{BASE_URL}}` (the
-    absolute URL that link previews need for og:image)."""
-    source = render_analytics(source, measurement_id)
+def render_page(source: str, base_url: str) -> str:
+    """Fill a page's `{{REPO_URL}}` and `{{BASE_URL}}` (the absolute URL that link previews need
+    for og:image)."""
     for name, value in (("REPO_URL", REPO_URL), ("BASE_URL", base_url)):
         source = source.replace(f"{{{{{name}}}}}", html.escape(value))
     return source
 
 
-def render_analytics(source: str, measurement_id: str | None) -> str:
-    """Fill `<!--analytics-->` and keep the `<!--if-analytics-->…<!--/if-analytics-->` or the
-    `<!--if-no-analytics-->…<!--/if-no-analytics-->` blocks (the privacy page's disclosure)."""
-    on, off = "if-analytics", "if-no-analytics"
-    keep, drop = (on, off) if measurement_id else (off, on)
-    source = re.sub(rf"<!--{drop}-->.*?<!--/{drop}-->\n?", "", source, flags=re.S)
-    source = re.sub(rf"<!--/?{keep}-->\n?", "", source)
-    return source.replace(ANALYTICS_PLACEHOLDER, analytics_tags(measurement_id))
-
-
-def _analytics_page(name: str, settings: Settings) -> Handler:
-    """A page that may carry Google Analytics, rendered once at startup. Served without
-    ETag/Last-Modified; the middleware's Cache-Control: no-cache applies."""
-    measurement_id = settings.ga_measurement_id
+def _static_page(name: str, settings: Settings) -> Handler:
+    """A page rendered once at startup. Served without ETag/Last-Modified; the middleware's
+    Cache-Control: no-cache applies."""
     source = (STATIC / name).read_text(encoding="utf-8")
-    if ANALYTICS_PLACEHOLDER not in source:
-        raise RuntimeError(f"{name} has no {ANALYTICS_PLACEHOLDER} placeholder")
-    rendered = render_page(source, measurement_id, settings.public_base_url)
+    rendered = render_page(source, settings.public_base_url)
     if leftover := re.search(r"\{\{\w*\}\}", rendered):
         raise RuntimeError(f"{name} has an unknown placeholder {leftover[0]}")
     body = rendered.encode()
 
     async def handler(_: web.Request) -> web.Response:
-        response = web.Response(body=body, content_type="text/html", charset="utf-8")
-        response[ANALYTICS_KEY] = measurement_id is not None
-        return response
+        return web.Response(body=body, content_type="text/html", charset="utf-8")
 
     return handler
 
@@ -334,8 +290,8 @@ def create_app(
     app[APPLICATION_ID_KEY] = application_id or ApplicationId(settings.discord_application_id)
     app[UNAVAILABLE_KEY] = (STATIC / "install-unavailable.html").read_bytes()
     app.router.add_get("/healthz", healthz)
-    for path, name in ANALYTICS_PAGES.items():  # never /d: its URL fragment holds the link token
-        app.router.add_get(path, _analytics_page(name, settings))
+    for path, name in STATIC_PAGES.items():
+        app.router.add_get(path, _static_page(name, settings))
     app.router.add_get("/install", install)
     app.router.add_get("/d", _page("d.html"))
     app.router.add_get("/favicon.ico", favicon)

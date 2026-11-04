@@ -11,6 +11,14 @@
 limit_req_zone $binary_remote_addr zone=zipbot_api:10m rate=30r/m;
 server_tokens off;  # http context: applies to every server block, incl. certbot's :80 redirect
 
+# Optional, behind Cloudflare: accept connections only from Cloudflare (see the guard in the
+# server block). $realip_remote_addr is the connecting address, before real_ip replaces it.
+# geo $realip_remote_addr $from_cf {
+#     default 0;
+#     173.245.48.0/20 1;  # one line per range in deploy/cloudflare_realip.conf.example
+#     2400:cb00::/32 1;
+# }
+
 server {
     listen 80;
     server_name mediazip.download;
@@ -20,9 +28,17 @@ server {
     add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
     client_max_body_size 1k;
 
-    # The token travels in the URL fragment, which browsers never send, so default
-    # access logs are safe; keep them minimal anyway.
-    access_log /var/log/nginx/zipbot.access.log;
+    # Optional, behind Cloudflare's proxy: set the real client IP from CF-Connecting-IP, trusted
+    # only from Cloudflare's ranges, so limit_req, any logs and X-Forwarded-For use the
+    # visitor's IP rather than Cloudflare's (see deploy/cloudflare_realip.conf.example).
+    # include /etc/nginx/cloudflare_realip.conf;
+    # With the geo block above, close the connection (444) for anyone bypassing Cloudflare:
+    # if ($from_cf = 0) { return 444; }
+
+    # No access log: no IP addresses or paths on disk. (The token travels in the URL fragment,
+    # which browsers never send, so it would never be logged anyway.)
+    access_log off;
+    error_log /var/log/nginx/zipbot.error.log crit;  # crit only: lower levels log client IPs
 
     location /api/ {
         limit_req zone=zipbot_api burst=10 nodelay;

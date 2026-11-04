@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from ipaddress import IPv4Network, IPv6Network, ip_network
 from typing import Annotated, Literal
 from urllib.parse import urlsplit
@@ -11,7 +10,6 @@ from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-GA_ID_RE = re.compile(r"G-[A-Z0-9]{4,16}")  # a GA4 measurement id; it ends up in HTML and a URL
 
 
 class Settings(BaseSettings):
@@ -43,8 +41,6 @@ class Settings(BaseSettings):
         ip_network("127.0.0.1/32"),
     )
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    # Google Analytics 4, cookieless (consent denied), on /, /privacy and /terms only. Unset: no GA.
-    ga_measurement_id: str | None = None
 
     @field_validator("public_base_url")
     @classmethod
@@ -61,17 +57,6 @@ class Settings(BaseSettings):
     @classmethod
     def _optional_id(cls, v: object) -> object:
         return None if isinstance(v, str) and not v.strip() else v  # `DISCORD_APPLICATION_ID=` means unset
-
-    @field_validator("ga_measurement_id", mode="before")
-    @classmethod
-    def _ga_id(cls, v: object) -> object:
-        if isinstance(v, str):
-            v = v.strip()
-            if not v:
-                return None  # `GA_MEASUREMENT_ID=` means unset
-            if not GA_ID_RE.fullmatch(v):
-                raise ValueError("must look like G-XXXXXXXXXX")
-        return v
 
     @field_validator("media_types", mode="before")
     @classmethod

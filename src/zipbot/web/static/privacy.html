@@ -11,7 +11,6 @@
 <link rel="icon" href="/static/brand/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/static/brand/apple-touch-icon.png">
 <link rel="stylesheet" href="/static/style.css">
-<!--analytics-->
 </head>
 <body>
 <header class="site-header">
@@ -21,7 +20,7 @@
   <article class="prose">
     <header class="page-header">
       <h1>Privacy policy</h1>
-      <p class="muted">MediaZip · last updated 3 November 2026</p>
+      <p class="muted">MediaZip · last updated 4 November 2026</p>
     </header>
 
     <h2>What this app does</h2>
@@ -44,53 +43,42 @@
     <ul>
       <li>The files themselves. Your browser downloads them directly from Discord; they never pass through this server.</li>
       <li>Message text. The app does not keep the content of your messages.</li>
-      <li>Logs of links, file names, or addresses. Server logs contain only counts and error types.</li>
+      <li>Logs of IP addresses, links, file names or file addresses. The app's own logs contain only counts and error types,
+        and the web server keeps no access log.</li>
     </ul>
 
     <h2>Website analytics</h2>
-<!--if-analytics-->
-    <p>The start page, this privacy policy and the terms of service use Google Analytics to count visits, in a
-      cookieless mode: consent for analytics and advertising storage is set to "denied" before Google's script loads,
-      so no cookies or similar identifiers are stored on your device and no advertising features are used.</p>
-    <ul>
-      <li>Google receives the page viewed (its address without anything after the path), the time, coarse device
-        and browser information (such as browser, operating system, screen size and language), and your IP address.
-        Google (Google Ireland Ltd. and Google LLC) processes the IP address and device data, possibly in the United
-        States, and uses the IP address to derive an approximate region; according to Google, it is not logged or
-        stored.</li>
-      <li>Legal basis: our legitimate interest in knowing how many people visit these pages and how they find them
-        (Art. 6(1)(f) GDPR). You have the right to object to this at any time; the simplest way is to block Google
-        Analytics in your browser, for example with a content blocker or
-        <a href="https://tools.google.com/dlpage/gaoptout">Google's opt-out browser add-on</a>. The app works the same
-        either way.</li>
-      <li>The download pages (<code>/d</code>), the Discord bot and the download links never use Google Analytics.
-        Nothing about your Discord account, messages or files is sent to Google.</li>
-      <li>Google's own handling of this data is described in
-        <a href="https://policies.google.com/privacy">Google's privacy policy</a> and
-        <a href="https://policies.google.com/technologies/partner-sites">how Google uses information from sites that
-        use its services</a>.</li>
-    </ul>
-<!--/if-analytics-->
-<!--if-no-analytics-->
     <p>This site uses no analytics, no cookies and no third-party scripts.</p>
-<!--/if-no-analytics-->
+
+    <h2>Hosting</h2>
+    <p>The site is served through <b>Cloudflare</b> (Cloudflare, Inc.), which sits in front of it as a reverse proxy and
+      content delivery network. Cloudflare may process data in the United States and elsewhere.</p>
+    <ul>
+      <li>Cloudflare handles the encrypted (HTTPS) connection, so every request to this site passes through it, including
+        the download page and its API: your IP address, the addresses requested, request headers, and the content of API
+        requests and responses. That includes a download link's secret, which the download page sends to the API, and
+        the Discord file addresses the API returns.</li>
+      <li>Cloudflare does not see the files themselves: your browser downloads them directly from Discord, not through
+        this site.</li>
+      <li>Behind Cloudflare, the web server (nginx) keeps no access log, and neither it nor the app logs IP addresses.
+        To limit how often the download API can be called, the app keeps the IP addresses of up to 10,000 recent
+        visitors, with the times of their requests in the last minute, in memory only (cleared on restart).</li>
+      <li>Legal basis: our legitimate interest in delivering the site and protecting it from abuse (Art. 6(1)(f) GDPR).
+        Cloudflare's own handling of this data is described in
+        <a href="https://www.cloudflare.com/privacypolicy/">Cloudflare's privacy policy</a>.</li>
+    </ul>
 
     <h2>Sharing</h2>
-<!--if-analytics-->
-    <p>No data is sold. Apart from the website analytics above, nothing is shared with third parties. Anyone who has a
-      download link can use it until it expires, so only share it if you want others to download the files.</p>
-<!--/if-analytics-->
-<!--if-no-analytics-->
-    <p>No data is sold or shared with third parties. Anyone who has a download link can use it until it expires, so only
-      share it if you want others to download the files.</p>
-<!--/if-no-analytics-->
+    <p>No data is sold. The only third parties involved are Discord, where the files live, and Cloudflare, which serves
+      the site as described under Hosting. Anyone who has a download link can use it until it expires, so only share it
+      if you want others to download the files.</p>
     <p>Revoking a link (or its expiry) stops it from being opened again. Whoever already opened it has received Discord's
       own file addresses, which Discord keeps valid for about a day; that is the same as the file links Discord itself
       shows in the chat.</p>
 
     <h2>Contact</h2>
     <p>Questions or deletion requests: contact the operator of this instance through the bot's Discord application page.
-      Because nothing is kept for longer than an hour, there is usually nothing left to delete.</p>
+      Because link and ZIP data is kept for an hour at most, there is usually nothing left to delete.</p>
   </article>
 </main>
 

@@ -195,3 +195,17 @@ def test_other_pages_show_the_brand_header(page: Page, base_url: str, path: str)
 def test_favicon_is_served(page: Page, base_url: str) -> None:
     resp = page.request.get(base_url + "/favicon.ico")
     assert resp.status == 200 and resp.headers["content-type"] == "image/x-icon"
+
+
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms", "/d"])
+def test_pages_make_no_third_party_requests_or_cookies(page: Page, base_url: str, path: str) -> None:
+    """No analytics: every request stays on the site's own origin and nothing sets a cookie."""
+    seen: list[str] = []
+    page.on("request", lambda r: seen.append(r.url))
+    page.goto(base_url + path)
+    page.wait_for_load_state("networkidle")
+    assert seen and all(u.startswith(base_url) for u in seen), seen
+    assert page.evaluate("typeof window.dataLayer") == "undefined"
+    assert page.locator('script:not([src^="/static/"])').count() == 0
+    assert page.evaluate("document.cookie") == ""
+    assert page.context.cookies() == []

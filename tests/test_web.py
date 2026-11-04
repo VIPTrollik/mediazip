@@ -404,182 +404,62 @@ def test_client_ip_custom_proxies(settings: Settings) -> None:
     assert client_ip(_req("10.1.2.3", "203.0.113.9"), s) == "203.0.113.9"
 
 
-# --- Google Analytics (cookieless, GA_MEASUREMENT_ID) ----------------------------------
+# --- No analytics, no third-party scripts ----------------------------------------------
 
-GA_ID = "G-TEST1234"
-GA_MARKERS = ("ga-id", "analytics.js", "googletagmanager", "google-analytics", "<!--analytics-->")
-GA_PAGES = ["/", "/privacy", "/terms"]
-
-
-@pytest.fixture
-async def ga_client(aiohttp_client: Any, settings: Settings, store: Store) -> Any:
-    return await aiohttp_client(create_app(settings.model_copy(update={"ga_measurement_id": GA_ID}), store))
+STATIC_PAGE_PATHS = ["/", "/privacy", "/terms"]
+TRACKER_MARKERS = ("google", "gtag", "dataLayer", "analytics.js", "ga-id", "<!--analytics-->")
 
 
-@pytest.mark.parametrize("path", [*GA_PAGES, "/d", "/install"])
-async def test_no_analytics_when_unset(client: Any, path: str) -> None:
-    resp = await client.get(path, allow_redirects=False)
-    html = await resp.text()
-    for marker in GA_MARKERS:
-        assert marker not in html, marker
-    assert resp.headers["Content-Security-Policy"] == SECURITY_HEADERS["Content-Security-Policy"]
-
-
-@pytest.mark.parametrize("path", GA_PAGES)
-async def test_analytics_on_the_three_pages_when_set(ga_client: Any, path: str) -> None:
-    resp = await ga_client.get(path)
+@pytest.mark.parametrize("path", [*STATIC_PAGE_PATHS, "/d"])
+async def test_csp_is_self_only_without_google(client: Any, path: str) -> None:
+    resp = await client.get(path)
     assert resp.status == 200
-    html = await resp.text()
-    head = html[: html.index("</head>")]
-    assert f'<meta name="ga-id" content="{GA_ID}">' in head
-    assert '<script src="/static/analytics.js" defer></script>' in head
-    assert "<!--analytics-->" not in html
-    assert not re.search(r"<script(?![^>]*\ssrc=)", html)  # no inline script: the CSP forbids it
-    assert "googletagmanager" not in html  # gtag.js is loaded by analytics.js, after the consent default
     csp = resp.headers["Content-Security-Policy"]
-    assert csp == web_app.ANALYTICS_CSP
-    assert "script-src 'self' https://www.googletagmanager.com;" in csp
-    assert "https://*.google-analytics.com https://*.analytics.google.com" in csp
-    assert "unsafe" not in csp and "frame-ancestors 'none'" in csp
-    for name, value in SECURITY_HEADERS.items():  # everything else unchanged
-        if name != "Content-Security-Policy":
-            assert resp.headers[name] == value
-
-
-@pytest.mark.parametrize(
-    "path",
-    ["/d", "/install", "/healthz", "/static/d.js", "/static/analytics.js", "/does-not-exist", "/privacy/"],
-)
-async def test_csp_stays_strict_elsewhere_when_set(ga_client: Any, path: str) -> None:
-    resp = await ga_client.get(path, allow_redirects=False)
-    csp = resp.headers["Content-Security-Policy"]
-    assert csp == SECURITY_HEADERS["Content-Security-Policy"]
+    assert csp == web_app.CSP
     assert "google" not in csp
+    assert "script-src 'self';" in csp
 
 
-async def test_never_on_the_download_page_or_api(ga_client: Any) -> None:
-    html = await (await ga_client.get("/d")).text()
-    for marker in GA_MARKERS:
+@pytest.mark.parametrize("path", [*STATIC_PAGE_PATHS, "/d", "/install"])
+async def test_no_page_loads_analytics(client: Any, path: str) -> None:
+    html = await (await client.get(path, allow_redirects=False)).text()
+    for marker in (*TRACKER_MARKERS, "googletagmanager"):
         assert marker not in html, marker
-    resp = await ga_client.post("/api/resolve", json={"token": "x" * 43})
-    assert "google" not in resp.headers["Content-Security-Policy"]
-    resp = await ga_client.get("/install")  # the 503 page while the bot isn't logged in
-    assert resp.status == 503
-    assert "analytics" not in await resp.text()
-    assert "google" not in resp.headers["Content-Security-Policy"]
+    for src in re.findall(r"<script[^>]*\ssrc=\"([^\"]+)\"", html):  # first-party scripts only
+        assert src.startswith("/static/"), src
 
 
-async def test_privacy_page_discloses_analytics_only_when_on(client: Any, ga_client: Any) -> None:
-    off = await (await client.get("/privacy")).text()
-    on = await (await ga_client.get("/privacy")).text()
-    for html in (off, on):
-        assert "if-analytics" not in html and "if-no-analytics" not in html  # markers removed
-        assert html.count("<h2>Website analytics</h2>") == 1
-    assert "This site uses no analytics, no cookies and no third-party scripts." in off
-    assert "Google" not in off and "Apart from the website analytics" not in off
-    assert "No data is sold or shared with third parties." in off
-    assert "no analytics" not in on
-    for text in (
-        "Art. 6(1)(f) GDPR",
-        "right to object",
-        "possibly in the United",
-        'href="https://tools.google.com/dlpage/gaoptout"',
-        'href="https://policies.google.com/privacy"',
-        "Apart from the website analytics above",
-    ):
-        assert text in on, text
-
-
-def test_render_analytics_blocks() -> None:
-    page = (
-        "a<!--analytics-->b\n"
-        "<!--if-analytics-->\nON\n<!--/if-analytics-->\n"
-        "<!--if-no-analytics-->\nOFF\n<!--/if-no-analytics-->\n"
-        "z"
-    )
-    assert web_app.render_analytics(page, None) == "ab\nOFF\nz"
-    assert web_app.render_analytics(page, GA_ID).startswith('a<meta name="ga-id"')
-    assert web_app.render_analytics(page, GA_ID).endswith("b\nON\nz")
-
-
-@pytest.mark.parametrize("path", GA_PAGES)
-async def test_rendered_pages_revalidate(client: Any, ga_client: Any, path: str) -> None:
-    for c in (client, ga_client):
-        resp = await c.get(path)
-        assert resp.headers["Cache-Control"] == "no-cache"
-        assert "ETag" not in resp.headers and "Last-Modified" not in resp.headers
-
-
-def test_csps_share_one_template() -> None:
-    assert web_app.build_csp() == web_app.CSP
-    strict = dict(d.split(" ", 1) for d in web_app.CSP.split("; "))
-    wide = dict(d.split(" ", 1) for d in web_app.ANALYTICS_CSP.split("; "))
-    assert strict.keys() == wide.keys()
-    for name, sources in strict.items():  # the analytics CSP only adds sources, never drops one
-        assert set(sources.split()) <= set(wide[name].split()), name
-    added = {name: set(wide[name].split()) - set(sources.split()) for name, sources in strict.items()}
-    assert added == {
-        "default-src": set(),
-        "img-src": {"https://*.google-analytics.com", "https://www.googletagmanager.com"},
-        "media-src": set(),
-        "connect-src": {
-            "https://*.google-analytics.com",
-            "https://*.analytics.google.com",
-            "https://www.googletagmanager.com",
-            "https://*.google.com",
-        },
-        "script-src": {"https://www.googletagmanager.com"},
-        "style-src": set(),
-        "frame-ancestors": set(),
-        "base-uri": set(),
-        "form-action": set(),
-    }
-
-
-def test_analytics_script_order_and_page_location() -> None:
-    js = (web_app.STATIC / "analytics.js").read_text(encoding="utf-8")
-    code = re.sub(r"(?m)(^|\s)//.*$", "", js)  # comments aside (not the https:// URL)
-    steps = [
-        "window.dataLayer = window.dataLayer || [];",
-        "function gtag() { dataLayer.push(arguments); }",
-        'gtag("consent", "default", {',
-        'gtag("js", new Date());',
-        'gtag("config", id,',
-        'document.createElement("script")',
-        "https://www.googletagmanager.com/gtag/js?id=",
-    ]
-    positions = [code.index(s) for s in steps]
-    assert positions == sorted(positions)  # consent default before config, gtag.js loaded last
-    consent = code[code.index('gtag("consent"') : code.index('gtag("js"')]
-    for key in ("analytics_storage", "ad_storage", "ad_user_data", "ad_personalization"):
-        assert f'{key}: "denied"' in consent, key
-    assert "page_location: location.origin + location.pathname" in code
-    for leak in ("location.href", "location.hash", "location.search", "cookie"):
-        assert leak not in code, leak
-
-
-async def test_analytics_script_is_served(client: Any) -> None:
+async def test_analytics_script_is_gone(client: Any) -> None:
+    assert not (web_app.STATIC / "analytics.js").exists()
     resp = await client.get("/static/analytics.js")
-    assert resp.status == 200
-    assert "javascript" in resp.headers["Content-Type"]
+    assert resp.status == 404
 
 
-def test_page_without_placeholder_fails_at_startup(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: Settings
-) -> None:
-    (tmp_path / "index.html").write_text("<html></html>", encoding="utf-8")
-    monkeypatch.setattr(web_app, "STATIC", tmp_path)
-    with pytest.raises(RuntimeError, match="placeholder"):
-        web_app._analytics_page("index.html", settings)  # pyright: ignore[reportPrivateUsage]
+async def test_privacy_page_says_no_analytics(client: Any) -> None:
+    html = await (await client.get("/privacy")).text()
+    assert "if-analytics" not in html and "if-no-analytics" not in html
+    assert "no analytics, no cookies and no third-party scripts" in html
+    assert 'href="https://www.cloudflare.com/privacypolicy/"' in html
+    assert "keeps no access log" in html
+
+
+@pytest.mark.parametrize("path", STATIC_PAGE_PATHS)
+async def test_rendered_pages_revalidate(client: Any, path: str) -> None:
+    resp = await client.get(path)
+    assert resp.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert resp.headers["Cache-Control"] == "no-cache"
+    assert "ETag" not in resp.headers and "Last-Modified" not in resp.headers
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
 
 
 def test_page_with_unknown_placeholder_fails_at_startup(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: Settings
 ) -> None:
-    (tmp_path / "index.html").write_text("<!--analytics--><a href='{{REPO}}'></a>", encoding="utf-8")
+    (tmp_path / "index.html").write_text("<a href='{{REPO}}'></a>", encoding="utf-8")
     monkeypatch.setattr(web_app, "STATIC", tmp_path)
     with pytest.raises(RuntimeError, match=r"unknown placeholder {{REPO}}"):
-        web_app._analytics_page("index.html", settings)  # pyright: ignore[reportPrivateUsage]
+        web_app._static_page("index.html", settings)  # pyright: ignore[reportPrivateUsage]
 
 
 # --- Branding: icon, favicons, source link ----------------------------------------------
@@ -673,7 +553,5 @@ async def test_landing_link_preview_follows_public_base_url(
 
 
 def test_render_page_fills_and_escapes() -> None:
-    out = web_app.render_page(
-        '<a href="{{REPO_URL}}"></a><img src="{{BASE_URL}}/x">', None, 'https://a.example/"'
-    )
+    out = web_app.render_page('<a href="{{REPO_URL}}"></a><img src="{{BASE_URL}}/x">', 'https://a.example/"')
     assert out == f'<a href="{web_app.REPO_URL}"></a><img src="https://a.example/&quot;/x">'
