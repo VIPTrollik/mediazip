@@ -142,6 +142,9 @@ also include [deploy/cloudflare_realip.conf.example](deploy/cloudflare_realip.co
 nginx sees the visitor's IP rather than Cloudflare's. Check that `https://<host>/healthz`
 returns `{"status": "ok"}`.
 
+The app also serves `robots.txt`, `sitemap.xml` and `llms.txt`, with their URLs built from
+`PUBLIC_BASE_URL`.
+
 The privacy policy ([privacy.html](src/zipbot/web/static/privacy.html)) describes
 mediazip.download's own setup (Cloudflare and nginx); adapt it to yours.
 

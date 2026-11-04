@@ -4,11 +4,14 @@ import asyncio
 import json
 import logging
 import re
+import struct
+from datetime import datetime
 from ipaddress import ip_network
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 from urllib.parse import parse_qs, urlsplit
+from xml.etree import ElementTree
 
 import jsonschema
 import pytest
@@ -68,7 +71,8 @@ async def test_pages_and_static(client: Any) -> None:
 
 @pytest.mark.parametrize("path", ["/", "/privacy", "/terms"])
 async def test_copy_is_about_images_and_videos(client: Any, path: str) -> None:
-    html = await (await client.get(path)).text()
+    # The landing's FAQ (and its JSON-LD copy) names PDFs only to say why they are left out.
+    html = _without_faq(await (await client.get(path)).text())
     for old in ("any file type", "PDF", "archives", "Download attachments", "files of any type"):
         assert old not in html, old
     assert "Download media" in html or path == "/terms"
@@ -250,7 +254,10 @@ async def test_landing_page(client: Any) -> None:
     assert "discord.com" not in html  # the install URL is built server-side from the application id
     assert html.index('href="/static/style.css"') < html.index('href="/static/landing.css"')
     assert 'href="/privacy"' in html and 'href="/terms"' in html
-    assert not re.search(r"<script|<style|\sstyle=|\son[a-z]+=", html)  # CSP: nothing inline
+    # CSP: nothing inline, except the JSON-LD data block, which browsers never execute
+    [ld] = re.findall(r"<script[^>]*>", html)
+    assert ld == '<script type="application/ld+json">'
+    assert not re.search(r"<style|\sstyle=|\son[a-z]+=", html)
 
 
 def test_icon_sprite_is_self_contained() -> None:
@@ -538,9 +545,12 @@ async def test_landing_link_preview(client: Any, settings: Settings) -> None:
     html = await (await client.get("/")).text()
     head = html[: html.index("</head>")]
     base = settings.public_base_url
-    assert f'<meta property="og:image" content="{base}/static/brand/mediazip-icon-512.png">' in head
+    assert f'<meta property="og:image" content="{base}/static/brand/og-card.png">' in head
+    assert '<meta property="og:image:width" content="1200">' in head
+    assert '<meta property="og:image:height" content="630">' in head
+    assert re.search(r'<meta property="og:image:alt" content="[^"]{20,}">', head)
     assert f'<meta property="og:url" content="{base}/">' in head
-    assert '<meta name="twitter:card" content="summary">' in head
+    assert '<meta name="twitter:card" content="summary_large_image">' in head
     assert re.search(r'<meta property="og:title" content="[^"]*MediaZip', head)
 
 
@@ -549,7 +559,8 @@ async def test_landing_link_preview_follows_public_base_url(
 ) -> None:
     other = settings.model_copy(update={"public_base_url": "https://mediazip.download"})
     html = await (await (await aiohttp_client(create_app(other, store))).get("/")).text()
-    assert 'content="https://mediazip.download/static/brand/mediazip-icon-512.png"' in html
+    assert 'content="https://mediazip.download/static/brand/og-card.png"' in html
+    assert '<link rel="canonical" href="https://mediazip.download/">' in html
 
 
 def test_render_page_fills_and_escapes() -> None:
@@ -577,3 +588,192 @@ async def test_resolve_counts_opens_misses_and_429(
         "link_misses": 1,
         "rate_limited": 1,
     }
+
+
+# --- Search engines and answer engines: indexing, robots.txt, sitemap, llms.txt, JSON-LD ----
+
+INDEXABLE_PATHS = [
+    "/",
+    "/privacy",
+    "/terms",
+    "/robots.txt",
+    "/sitemap.xml",
+    "/llms.txt",
+    "/static/brand/og-card.png",
+    "/static/media/download-page.webp",
+]
+CRAWLER_FILES = [
+    ("/robots.txt", "text/plain"),
+    ("/sitemap.xml", "application/xml"),
+    ("/llms.txt", "text/plain"),
+]
+
+
+def _without_faq(html: str) -> str:
+    """The page without its FAQ section and JSON-LD block."""
+    html = re.sub(r'<section class="faq".*?</section>', "", html, flags=re.S)
+    return re.sub(r'<script type="application/ld\+json">.*?</script>', "", html, flags=re.S)
+
+
+def _json_ld(html: str) -> dict[str, Any]:
+    [block] = re.findall(r'<script type="application/ld\+json">(.*?)</script>', html, flags=re.S)
+    data = json.loads(block)
+    return {node["@type"]: node for node in data["@graph"]}
+
+
+def _visible_faq(html: str) -> list[tuple[str, str]]:
+    section = html[html.index('<section class="faq"') :]
+    section = section[: section.index("</section>")]
+    pairs = re.findall(r"<summary>(.*?)</summary>\s*<p>(.*?)</p>", section, flags=re.S)
+
+    def text(fragment: str) -> str:
+        return " ".join(re.sub(r"<[^>]+>", "", fragment).split())
+
+    return [(text(q), text(a)) for q, a in pairs]
+
+
+@pytest.mark.parametrize("path", INDEXABLE_PATHS)
+async def test_public_paths_are_indexable(client: Any, path: str) -> None:
+    resp = await client.get(path)
+    assert resp.status == 200
+    assert "X-Robots-Tag" not in resp.headers
+    if resp.content_type == "text/html":
+        assert "noindex" not in await resp.text()
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/d"),
+        ("POST", "/api/resolve"),
+        ("GET", "/install"),  # the 503 page: the bot is not logged in
+        ("GET", "/install?type=guild"),
+        ("GET", "/healthz"),
+    ],
+)
+async def test_private_paths_are_noindex(client: Any, method: str, path: str) -> None:
+    resp = await client.request(method, path, json={"token": "x" * 43}, allow_redirects=False)
+    assert resp.headers["X-Robots-Tag"] == "noindex, nofollow"
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+
+
+async def test_install_redirect_is_noindex(aiohttp_client: Any, settings: Settings, store: Store) -> None:
+    client = await aiohttp_client(create_app(settings, store, application_id=lambda: 7))
+    resp = await client.get("/install", allow_redirects=False)
+    assert resp.status == 302 and resp.headers["X-Robots-Tag"] == "noindex, nofollow"
+
+
+async def test_download_page_keeps_meta_noindex(client: Any) -> None:
+    assert '<meta name="robots" content="noindex, nofollow">' in await (await client.get("/d")).text()
+
+
+@pytest.mark.parametrize(("path", "ctype"), CRAWLER_FILES)
+async def test_crawler_files_served(client: Any, path: str, ctype: str) -> None:
+    resp = await client.get(path)
+    assert resp.status == 200
+    assert resp.headers["Content-Type"] == f"{ctype}; charset=utf-8"
+    assert resp.headers["Cache-Control"] == "public, max-age=86400"
+    for name, value in SECURITY_HEADERS.items():
+        assert resp.headers[name] == value
+    assert "{{" not in await resp.text()
+
+
+async def test_robots_txt(client: Any, settings: Settings) -> None:
+    body = await (await client.get("/robots.txt")).text()
+    assert body == (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /d\n"
+        "Disallow: /api/\n"
+        "Disallow: /install\n"
+        "\n"
+        f"Sitemap: {settings.public_base_url}/sitemap.xml\n"
+    )
+    assert settings.public_base_url.startswith("https://")  # an absolute Sitemap URL
+
+
+async def test_sitemap_lists_the_public_pages(client: Any, settings: Settings) -> None:
+    root = ElementTree.fromstring(await (await client.get("/sitemap.xml")).read())  # noqa: S314 (our own XML)
+    ns = {"s": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+    assert root.tag == "{http://www.sitemaps.org/schemas/sitemap/0.9}urlset"
+    entries = {u.findtext("s:loc", namespaces=ns): u.findtext("s:lastmod", namespaces=ns) for u in root}
+    base = settings.public_base_url
+    assert set(entries) == {f"{base}/", f"{base}/privacy", f"{base}/terms"}
+    for lastmod in entries.values():
+        assert lastmod is not None and re.fullmatch(r"\d{4}-\d{2}-\d{2}", lastmod)
+
+
+@pytest.mark.parametrize(("path", "name"), [("/privacy", "privacy.html"), ("/terms", "terms.html")])
+def test_sitemap_lastmod_matches_last_updated(path: str, name: str) -> None:
+    """Bump PAGE_LASTMOD when a legal page's "last updated" date changes."""
+    html = (web_app.STATIC / name).read_text(encoding="utf-8")
+    m = re.search(r"last updated (\d{1,2} \w+ \d{4})", html)
+    assert m
+    shown = datetime.strptime(m[1], "%d %B %Y").date().isoformat()
+    assert web_app.PAGE_LASTMOD[path] == shown
+
+
+async def test_llms_txt(client: Any, settings: Settings) -> None:
+    body = await (await client.get("/llms.txt")).text()
+    base = settings.public_base_url
+    assert body.startswith("# MediaZip\n\n> ")
+    for link in (f"({base}/install)", f"({base}/install?type=guild)", f"({base}/privacy)", f"({base}/terms)"):
+        assert link in body, link
+    assert f"({web_app.REPO_URL})" in body
+    for fact in ("Download media", "Add to ZIP", "/zip", "DM", "CORS", "60 minutes", "SHA-256", "Cloudflare"):
+        assert fact in body, fact
+    assert "—" not in body  # no em-dashes
+
+
+@pytest.mark.parametrize("path", ["/", "/privacy", "/terms"])
+async def test_pages_have_canonical_and_description(client: Any, settings: Settings, path: str) -> None:
+    html = await (await client.get(path)).text()
+    head = html[: html.index("</head>")]
+    canonical = settings.public_base_url + path
+    assert f'<link rel="canonical" href="{canonical}">' in head
+    [desc] = re.findall(r'<meta name="description" content="([^"]+)">', head)
+    assert 50 <= len(desc) <= 155
+    assert "—" not in html
+
+
+async def test_landing_title_and_description_align_with_og(client: Any) -> None:
+    html = await (await client.get("/")).text()
+    head = html[: html.index("</head>")]
+    [title] = re.findall(r"<title>([^<]+)</title>", head)
+    [desc] = re.findall(r'<meta name="description" content="([^"]+)">', head)
+    assert f'<meta property="og:title" content="{title}">' in head
+    assert f'<meta property="og:description" content="{desc}">' in head
+    assert "Discord" in title and "ZIP" in desc
+
+
+async def test_landing_json_ld(client: Any, settings: Settings) -> None:
+    html = await (await client.get("/")).text()
+    nodes = _json_ld(html)
+    base = settings.public_base_url
+    app = nodes["SoftwareApplication"]
+    assert app["name"] == "MediaZip" and app["url"] == f"{base}/"
+    assert app["applicationCategory"] == "UtilitiesApplication"
+    assert app["offers"] == {"@type": "Offer", "price": "0", "priceCurrency": "USD"}
+    assert app["isAccessibleForFree"] is True
+    assert app["image"] == f"{base}/static/brand/og-card.png"
+    assert app["sameAs"] == [web_app.REPO_URL]
+    assert nodes["WebSite"]["url"] == f"{base}/"
+    faq = [(q["name"], q["acceptedAnswer"]["text"]) for q in nodes["FAQPage"]["mainEntity"]]
+    assert faq == _visible_faq(html)  # the structured data says exactly what the page shows
+    assert 6 <= len(faq) <= 8
+
+
+async def test_landing_faq_follows_the_screenshots(client: Any) -> None:
+    html = await (await client.get("/")).text()
+    main = html[html.index("<main") : html.index("</main>")]
+    assert main.index('id="shots-title"') < main.index('id="faq-title"') < main.index("landing__note")
+    assert main.count("<h1") == 1
+    assert '<h2 id="faq-title">Frequently asked questions</h2>' in main
+
+
+def test_og_card_is_a_1200x630_png() -> None:
+    data = (web_app.STATIC / "brand" / "og-card.png").read_bytes()
+    assert data[:8] == b"\x89PNG\r\n\x1a\n" and data[12:16] == b"IHDR"
+    assert struct.unpack(">II", data[16:24]) == (1200, 630)
+    assert len(data) < 200_000

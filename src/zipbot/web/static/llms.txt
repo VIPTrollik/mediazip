@@ -1,0 +1,41 @@
+# MediaZip
+
+> MediaZip is a free, open-source Discord app that saves every image and video of a Discord message at once, as separate files or one ZIP, straight to your device. It works on desktop and mobile, in every server and DM.
+
+## What it does
+
+- Adds a **Download media** command to a message's **Apps** menu in Discord. MediaZip replies privately (only you see the reply) with thumbnails and two buttons: **Download all** saves every file separately, **Download ZIP** saves them as one ZIP.
+- Each button opens the download page at {{BASE_URL}}. The page fetches the files from Discord and saves them one by one, builds the ZIP in your browser, or offers your device's share sheet where the browser supports it.
+- Installed to your Discord account, it works in every server and DM, including ones where the bot isn't a member.
+
+## How to use it
+
+- **Download media:** right-click (or long-press on mobile) a message, then choose **Apps** → **Download media**.
+- **Add to ZIP:** choose **Apps** → **Add to ZIP** on several messages (up to 10 by default) to collect them into one ZIP with a folder per message. Your ZIP is kept as one message in your DM with the bot; its **Download your ZIP** button downloads the whole collection.
+- **/zip:** `/zip show`, `/zip link` and `/zip clear` show, link or empty your ZIP.
+- **DM forwarding:** forward messages, or upload files, to the bot's DM. The bot sends one reply with a link for all of them.
+
+## What it saves
+
+- Images and videos (including GIFs) from a message's attachments and embeds.
+- Not documents, PDFs, archives or other files: Discord's CDN allows browsers to fetch images and videos from other sites (CORS), but not other file types, so the download page can't fetch them.
+
+## Privacy in short
+
+- The files go directly between your browser and Discord's CDN. MediaZip's server never handles the file bytes, and the ZIP is built on your device.
+- Download links expire after 60 minutes (sooner if Discord's file links expire first) and can be revoked with the **Revoke** button. Links and ZIPs are kept in memory only, never on disk.
+- The link's secret stays in the URL fragment, which browsers never send to the server; the server stores only its SHA-256 hash.
+- No analytics, no cookies, no third-party scripts. Only aggregate daily usage counters are saved, without user IDs, IP addresses, links or file names.
+- The site is served through Cloudflare's proxy, which handles the HTTPS connection but not the files.
+
+## Install
+
+- [Add MediaZip to your Discord account]({{BASE_URL}}/install): user install, works in every server and DM.
+- [Add MediaZip to a server]({{BASE_URL}}/install?type=guild): makes it available to everyone there (needs Manage Server). Optional.
+
+## Links
+
+- [Home]({{BASE_URL}}/)
+- [Privacy policy]({{BASE_URL}}/privacy)
+- [Terms of service]({{BASE_URL}}/terms)
+- [Source code on GitHub]({{REPO_URL}}): MIT license, self-hostable with Docker

@@ -1,4 +1,5 @@
-"""aiohttp web app: landing + install link, download page, resolve API, health check (PLAN.md §5, §6)."""
+"""aiohttp web app: landing + install link, download page, resolve API, health check (PLAN.md §5, §6),
+plus robots.txt, sitemap.xml and llms.txt for search and answer engines."""
 
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from ipaddress import IPv4Address, IPv6Address, ip_address, ip_network
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import quote, urlencode
+from xml.sax.saxutils import escape as xml_escape
 
 from aiohttp import web
 from aiohttp.web_fileresponse import CONTENT_TYPES as STATIC_CONTENT_TYPES
@@ -58,14 +60,23 @@ def build_csp() -> str:
 CSP = build_csp()
 # Rendered once at startup (their `{{REPO_URL}}` and `{{BASE_URL}}` filled in).
 STATIC_PAGES = {"/": "index.html", "/privacy": "privacy.html", "/terms": "terms.html"}
+# sitemap.xml's <lastmod> per page: bump a page's date whenever its content changes
+# (privacy and terms show the same date as "last updated").
+PAGE_LASTMOD = {"/": "2026-11-04", "/privacy": "2026-11-04", "/terms": "2026-11-03"}
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "Referrer-Policy": "no-referrer",
     "X-Content-Type-Options": "nosniff",
-    "X-Robots-Tag": "noindex, nofollow",
     "Cross-Origin-Opener-Policy": "same-origin",
     "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
 }
+# Kept out of search results: the download page, the API, the install redirect (and its 503 page),
+# the health check. The public pages, robots.txt, sitemap.xml, llms.txt and /static/ are indexable.
+NOINDEX = {"X-Robots-Tag": "noindex, nofollow"}
+NOINDEX_PATHS = frozenset({"/d", "/install", "/healthz"})
+NOINDEX_PREFIXES = ("/api/",)
+# robots.txt, sitemap.xml, llms.txt: change rarely, so crawlers may cache them for a day.
+CRAWLER_CACHE = "public, max-age=86400"
 TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{20,100}")
 NOT_FOUND = {"error": "not_found"}
 MAX_TRACKED_CLIENTS = 10_000
@@ -166,6 +177,8 @@ async def security_headers(request: web.Request, handler: Handler) -> web.Stream
         log.error("unhandled %s on %s %s", type(exc).__name__, request.method, request.path)
         response = web.json_response({"error": "internal"}, status=500)
     response.headers.update(SECURITY_HEADERS)
+    if request.path in NOINDEX_PATHS or request.path.startswith(NOINDEX_PREFIXES):
+        response.headers.update(NOINDEX)
     if request.path.startswith("/api/"):
         response.headers["Cache-Control"] = "no-store"
     elif "Cache-Control" not in response.headers:
@@ -215,16 +228,57 @@ def render_page(source: str, base_url: str) -> str:
 def _static_page(name: str, settings: Settings) -> Handler:
     """A page rendered once at startup. Served without ETag/Last-Modified; the middleware's
     Cache-Control: no-cache applies."""
-    source = (STATIC / name).read_text(encoding="utf-8")
-    rendered = render_page(source, settings.public_base_url)
-    if leftover := re.search(r"\{\{\w*\}\}", rendered):
-        raise RuntimeError(f"{name} has an unknown placeholder {leftover[0]}")
-    body = rendered.encode()
+    body = render_file(name, settings).encode()
 
     async def handler(_: web.Request) -> web.Response:
         return web.Response(body=body, content_type="text/html", charset="utf-8")
 
     return handler
+
+
+def robots_txt(base_url: str) -> str:
+    """Valid on its own: Cloudflare may prepend its managed content-signals block to it."""
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /d\n"
+        "Disallow: /api/\n"
+        "Disallow: /install\n"
+        "\n"
+        f"Sitemap: {base_url}/sitemap.xml\n"
+    )
+
+
+def sitemap_xml(base_url: str) -> str:
+    urls = "".join(
+        f"  <url><loc>{xml_escape(base_url + path)}</loc><lastmod>{lastmod}</lastmod></url>\n"
+        for path, lastmod in PAGE_LASTMOD.items()
+    )
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n'
+        f"{urls}</urlset>\n"
+    )
+
+
+def _text(body: str, content_type: str) -> Handler:
+    """A crawler file built once at startup, served with a day's Cache-Control."""
+    data = body.encode()
+
+    async def handler(_: web.Request) -> web.Response:
+        return web.Response(
+            body=data, content_type=content_type, charset="utf-8", headers={"Cache-Control": CRAWLER_CACHE}
+        )
+
+    return handler
+
+
+def render_file(name: str, settings: Settings) -> str:
+    """A static file with its placeholders filled; an unknown placeholder fails at startup."""
+    rendered = render_page((STATIC / name).read_text(encoding="utf-8"), settings.public_base_url)
+    if leftover := re.search(r"\{\{\w*\}\}", rendered):
+        raise RuntimeError(f"{name} has an unknown placeholder {leftover[0]}")
+    return rendered
 
 
 async def favicon(_: web.Request) -> web.FileResponse:
@@ -299,6 +353,11 @@ def create_app(
     app.router.add_get("/healthz", healthz)
     for path, name in STATIC_PAGES.items():
         app.router.add_get(path, _static_page(name, settings))
+    base = settings.public_base_url
+    app.router.add_get("/robots.txt", _text(robots_txt(base), "text/plain"))
+    app.router.add_get("/sitemap.xml", _text(sitemap_xml(base), "application/xml"))
+    # Markdown (llmstxt.org), served as text/plain so browsers show it rather than download it
+    app.router.add_get("/llms.txt", _text(render_file("llms.txt", settings), "text/plain"))
     app.router.add_get("/install", install)
     app.router.add_get("/d", _page("d.html"))
     app.router.add_get("/favicon.ico", favicon)

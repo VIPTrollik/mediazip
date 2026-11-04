@@ -60,6 +60,31 @@
 }
 .shot figcaption { margin-top: var(--space-2); font-size: var(--text-sm); color: var(--muted); }
 
+/* ---- FAQ: native <details>, so it opens and closes without script ---------------- */
+.faq { margin-top: var(--space-6); }
+.faq__list { display: grid; gap: var(--space-2); max-width: var(--prose); }
+.faq__item {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-md);
+}
+.faq__item summary {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--space-3);
+  min-height: var(--control-md); padding: var(--space-2) var(--space-4);
+  font-weight: 600; cursor: pointer; list-style: none;
+  border-radius: var(--radius-md);
+}
+.faq__item summary::-webkit-details-marker { display: none; }
+.faq__item summary::after { /* a chevron that turns when open */
+  content: ""; flex: none; width: 8px; height: 8px; margin-right: var(--space-1);
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted);
+  transform: translateY(-2px) rotate(45deg); transition: transform 120ms;
+}
+.faq__item[open] summary::after { transform: translateY(2px) rotate(-135deg); }
+.faq__item summary:hover { background: var(--surface-2); }
+.faq__item[open] summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.faq__item p { margin: 0; padding: 0 var(--space-4) var(--space-4); color: var(--muted); }
+.faq__item p b { color: var(--fg); font-weight: 600; }
+@media (prefers-reduced-motion: reduce) { .faq__item summary::after { transition: none; } }
+
 .landing__note { margin-top: var(--space-5); }
 .landing__note a { color: var(--link); }
 .repo-link { display: inline-flex; align-items: center; gap: var(--space-1); }

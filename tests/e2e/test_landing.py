@@ -110,9 +110,12 @@ def test_landing_structure_and_keyboard(page: Page, base_url: str) -> None:
     assert footer_repo.get_attribute("href") == REPO_URL
     lead = page.locator(".hero__lead")
     assert "Download media" in lead.inner_text() and "Add to ZIP" in lead.inner_text()
-    main_text = page.locator("main").inner_text()
-    assert "PDF" not in main_text and "any file type" not in main_text  # media only: no CORS for documents
-    assert page.get_by_text("Apps → Download media").is_visible()
+    # media only (no CORS for documents): the FAQ names PDFs only to explain why they are left out
+    main_text = page.locator("main").evaluate(
+        "m => { const c = m.cloneNode(true); c.querySelector('.faq').remove(); return c.innerText; }"
+    )
+    assert "PDF" not in main_text and "any file type" not in main_text
+    assert page.locator(".steps").get_by_text("Apps → Download media").is_visible()
     assert page.get_by_role("navigation", name="Site").is_visible()
     assert page.get_by_role("contentinfo").count() == 1  # footer is a sibling of <main>, not inside it
     assert "affiliated" not in page.locator("body").inner_text()  # the disclaimer lives in the terms
@@ -206,6 +209,75 @@ def test_pages_make_no_third_party_requests_or_cookies(page: Page, base_url: str
     page.wait_for_load_state("networkidle")
     assert seen and all(u.startswith(base_url) for u in seen), seen
     assert page.evaluate("typeof window.dataLayer") == "undefined"
-    assert page.locator('script:not([src^="/static/"])').count() == 0
+    # the only inline script is the JSON-LD data block, which is never executed
+    assert page.locator('script:not([src^="/static/"]):not([type="application/ld+json"])').count() == 0
     assert page.evaluate("document.cookie") == ""
     assert page.context.cookies() == []
+
+
+# --- SEO: structured data, FAQ ----------------------------------------------------------
+
+
+def test_landing_has_no_console_errors_or_csp_violations(page: Page, base_url: str) -> None:
+    """The JSON-LD block is a data block: no engine may report it as a blocked inline script."""
+    errors: list[str] = []
+    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(str(e)))
+    page.goto(base_url + "/")
+    page.wait_for_load_state("networkidle")
+    assert errors == []
+    assert page.evaluate("window.__csp") == []
+    assert page.locator('script[type="application/ld+json"]').count() == 1
+
+
+def test_json_ld_faq_matches_the_visible_faq(page: Page, base_url: str) -> None:
+    page.goto(base_url + "/")
+    data = page.evaluate("JSON.parse(document.querySelector('script[type=\"application/ld+json\"]').text)")
+    [faq] = [node for node in data["@graph"] if node["@type"] == "FAQPage"]
+    items = page.locator(".faq__item")
+    visible = [
+        (
+            " ".join(item.locator("summary").inner_text().split()),
+            " ".join(item.locator("p").text_content().split()),  # pyright: ignore[reportOptionalMemberAccess]
+        )
+        for item in items.all()
+    ]
+    assert [(q["name"], q["acceptedAnswer"]["text"]) for q in faq["mainEntity"]] == visible
+    assert page.get_by_role("heading", level=2, name="Frequently asked questions").is_visible()
+
+
+def test_faq_items_open_and_close(page: Page, base_url: str) -> None:
+    page.goto(base_url + "/")
+    first = page.locator(".faq__item").first
+    summary, answer = first.locator("summary"), first.locator("p")
+    assert first.get_attribute("open") is None and not answer.is_visible()
+    # keyboard first (before any click, so the focus counts as keyboard focus in every engine):
+    # a focused summary shows the focus ring and toggles with Enter
+    summary.focus()
+    assert summary.evaluate("e => getComputedStyle(e).outlineStyle") == "solid"
+    page.keyboard.press("Enter")
+    assert first.get_attribute("open") == "" and answer.is_visible()
+    assert "Download media" in answer.inner_text()
+    page.keyboard.press("Enter")
+    assert first.get_attribute("open") is None and not answer.is_visible()
+    # pointer
+    summary.click()
+    assert answer.is_visible()
+    summary.click()
+    assert not answer.is_visible()
+
+
+@pytest.mark.parametrize("scheme", ["light", "dark"])
+def test_open_faq_fits_a_phone(browser: Browser, base_url: str, scheme: Literal["light", "dark"]) -> None:
+    context = _context(browser, viewport={"width": 360, "height": 800})
+    page = context.new_page()
+    page.goto(base_url + "/")
+    page.emulate_media(color_scheme=scheme)
+    for summary in page.locator(".faq__item summary").all():
+        summary.click()
+    assert page.locator(".faq__item[open]").count() == page.locator(".faq__item").count()
+    assert not page.evaluate("document.documentElement.scrollWidth > innerWidth"), "horizontal scroll"
+    height = page.locator(".faq__item summary").first.evaluate("e => e.getBoundingClientRect().height")
+    assert height >= 44  # a full-size tap target
+    assert page.evaluate("window.__csp") == []
+    context.close()
