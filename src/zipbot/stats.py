@@ -10,7 +10,8 @@ restart the set starts empty, so a user active both before and after it is count
 day: the number is approximate.
 
 `python -m zipbot.stats` prints the saved counters (run it in the container:
-`docker compose exec zipbot python -m zipbot.stats`).
+`docker compose exec zipbot python -m zipbot.stats`). The app's owners also get them in
+Discord with /stats (zipbot.cogs.stats), rendered by `reply_texts()`.
 """
 
 from __future__ import annotations
@@ -245,17 +246,9 @@ def fetch_install_counts(
         return {"error": type(exc).__name__}
 
 
-def render_table(days: Mapping[str, Mapping[str, int]], today: date, show_days: int) -> str:
-    headers = ["date", *(h for _, h in COLUMNS)]
-    rows: list[list[str]] = []
-    for back in range(show_days):
-        day = (today - timedelta(days=back)).isoformat()
-        counters = days.get(day, {})
-        rows.append([day, *(str(counters.get(k, 0)) for k, _ in COLUMNS)])
-    rows.append([])
-    for label, window in (("7 days", 7), ("30 days", 30), ("all time", None)):
-        sums = totals(days, today, window)
-        rows.append([label, *(str(sums.get(k, 0)) for k, _ in COLUMNS)])
+def format_table(headers: Sequence[str], rows: Sequence[Sequence[str]]) -> str:
+    """Columns padded to fit, the first left-aligned and the rest right-aligned; an empty row
+    becomes a rule."""
     widths = [max(len(headers[i]), *(len(r[i]) for r in rows if r)) for i in range(len(headers))]
 
     def line(cells: Sequence[str]) -> str:
@@ -268,10 +261,120 @@ def render_table(days: Mapping[str, Mapping[str, int]], today: date, show_days: 
     return "\n".join(out)
 
 
+def render_table(days: Mapping[str, Mapping[str, int]], today: date, show_days: int) -> str:
+    headers = ["date", *(h for _, h in COLUMNS)]
+    rows: list[list[str]] = []
+    for back in range(show_days):
+        day = (today - timedelta(days=back)).isoformat()
+        counters = days.get(day, {})
+        rows.append([day, *(str(counters.get(k, 0)) for k, _ in COLUMNS)])
+    rows.append([])
+    for label, window in (("7 days", 7), ("30 days", 30), ("all time", None)):
+        sums = totals(days, today, window)
+        rows.append([label, *(str(sums.get(k, 0)) for k, _ in COLUMNS)])
+    return format_table(headers, rows)
+
+
 def install_line(installs: Mapping[str, Any]) -> str:
     if "error" in installs:
         return f"Discord installs: install counts unavailable ({installs['error']})"
-    return f"Discord installs (approximate): {installs['guilds']} servers, {installs['user_installs']} users"
+    users = installs.get("user_installs")
+    users_text = "?" if users is None else users
+    return f"Discord installs (approximate): {installs['guilds']} servers, {users_text} users"
+
+
+# --- the /stats reply (zipbot.cogs.stats) -----------------------------------------------------
+
+# Discord's limit on the text of all of a Components V2 message's text displays together,
+# with a margin.
+REPLY_TEXT_MAX = 3900
+REPLY_MAX_DAYS = 90
+ZIP_COUNTERS = ("zip_show", "zip_link", "zip_clear")
+# The summary's rows: (label, counters added up).
+SUMMARY_ROWS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("users", (USERS,)),
+    ("Download media", ("download_media",)),
+    ("Add to ZIP", ("add_to_zip",)),
+    ("/zip", ZIP_COUNTERS),
+    ("DM bursts", ("dm_burst",)),
+    ("links created", ("links_created",)),
+    ("files", ("files_linked",)),
+    ("link opens", ("link_opens",)),
+    ("misses", ("link_misses",)),
+    ("429s", ("rate_limited",)),
+)
+SUMMARY_WINDOWS: tuple[tuple[str, int | None], ...] = (
+    ("today", 1),
+    ("7 days", 7),
+    ("30 days", 30),
+    ("all time", None),
+)
+# The per-day table's columns: (header, counters added up).
+DAILY_COLUMNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("users", (USERS,)),
+    ("dl", ("download_media",)),
+    ("add", ("add_to_zip",)),
+    ("zip", ZIP_COUNTERS),
+    ("dm", ("dm_burst",)),
+    ("links", ("links_created",)),
+    ("files", ("files_linked",)),
+    ("opens", ("link_opens",)),
+)
+REPLY_HEAD = "📊 **MediaZip usage** (UTC days, live counters)"
+DAILY_LEGEND = "-# dl: Download media, add: Add to ZIP, zip: /zip, dm: DM bursts, opens: link opens"
+REPLY_FOOTER = (
+    "-# users: distinct users per day, approximate (someone active before and after a restart "
+    "counts twice that day). Totals over several days add up days, so they are user-days, not "
+    "people. Install counts are Discord's own approximations."
+)
+
+
+def _sum(counters: Mapping[str, int], names: Sequence[str]) -> int:
+    return sum(counters.get(n, 0) for n in names)
+
+
+def code_block(text: str) -> str:
+    return f"```\n{text}\n```"
+
+
+def summary_table(days: Mapping[str, Mapping[str, int]], today: date) -> str:
+    sums = [totals(days, today, window) for _, window in SUMMARY_WINDOWS]
+    rows = [[label, *(str(_sum(s, names)) for s in sums)] for label, names in SUMMARY_ROWS]
+    return format_table(["", *(label for label, _ in SUMMARY_WINDOWS)], rows)
+
+
+def daily_table(days: Mapping[str, Mapping[str, int]], today: date, show_days: int) -> str:
+    rows: list[list[str]] = []
+    for back in range(show_days):
+        day = today - timedelta(days=back)
+        counters = days.get(day.isoformat(), {})
+        rows.append([day.strftime("%m-%d"), *(str(_sum(counters, names)) for _, names in DAILY_COLUMNS)])
+    return format_table(["day", *(h for h, _ in DAILY_COLUMNS)], rows)
+
+
+def reply_texts(
+    days: Mapping[str, Mapping[str, int]],
+    today: date,
+    installs: Mapping[str, Any],
+    show_days: int,
+    *,
+    limit: int = REPLY_TEXT_MAX,
+) -> tuple[list[str], list[str]]:
+    """The /stats reply's text: (summary parts, per-day parts). The per-day table lists the
+    newest `show_days` days (1 to REPLY_MAX_DAYS), fewer if they wouldn't fit in `limit`
+    characters in all; then a note says how many are shown."""
+    show_days = max(1, min(show_days, REPLY_MAX_DAYS))
+    summary = [REPLY_HEAD, code_block(summary_table(days, today)), install_line(installs)]
+    fixed = sum(map(len, summary))
+    daily: list[str] = []
+    for n in range(show_days, 0, -1):
+        head = "**Today**" if n == 1 else f"**Last {n} days**"
+        if n < show_days:
+            head += f" (of {show_days} asked; more would not fit in one Discord message)"
+        daily = [head, code_block(daily_table(days, today, n)), DAILY_LEGEND, REPLY_FOOTER]
+        if fixed + sum(map(len, daily)) <= limit:
+            break
+    return summary, daily
 
 
 def main(

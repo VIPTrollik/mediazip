@@ -107,3 +107,15 @@ def test_missing_token_fails(env: pytest.MonkeyPatch) -> None:
     env.delenv("DISCORD_TOKEN")
     with pytest.raises(ValidationError):
         load()
+
+
+def test_stats_guild_ids(env: pytest.MonkeyPatch) -> None:
+    assert load().stats_guild_ids is None  # auto-detect: the owners' own servers
+    env.setenv("STATS_GUILD_IDS", "")
+    assert load().stats_guild_ids is None
+    env.setenv("STATS_GUILD_IDS", " 123456789012345678, 42 ,")
+    assert load().stats_guild_ids == {123456789012345678, 42}
+    for bad in ("abc", "1,-2", "0", "1.5"):
+        env.setenv("STATS_GUILD_IDS", bad)
+        with pytest.raises(ValidationError, match="stats_guild_ids"):
+            load()

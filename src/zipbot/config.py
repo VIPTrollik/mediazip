@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
     # Where the daily usage counters are saved (zipbot.stats); unset: kept in memory only.
     stats_path: Path | None = None
+    # Servers that get the owner-only /stats command. Unset: every server the bot is in whose
+    # owner is one of the app's owners (zipbot.cogs.stats).
+    stats_guild_ids: Annotated[frozenset[int] | None, NoDecode] = None
 
     @field_validator("public_base_url")
     @classmethod
@@ -70,6 +73,18 @@ class Settings(BaseSettings):
             if not items or not items <= allowed:
                 raise ValueError(f"comma list of {sorted(allowed)}")
             return frozenset(items)
+        return v
+
+    @field_validator("stats_guild_ids", mode="before")
+    @classmethod
+    def _guild_ids(cls, v: object) -> object:
+        if isinstance(v, str):
+            items = [s.strip() for s in v.split(",") if s.strip()]
+            if not items:
+                return None  # `STATS_GUILD_IDS=` means unset: auto-detect
+            if not all(s.isdecimal() and int(s) > 0 for s in items):
+                raise ValueError("comma list of server ids")
+            return frozenset(int(s) for s in items)
         return v
 
     @field_validator("trusted_proxies", mode="before")

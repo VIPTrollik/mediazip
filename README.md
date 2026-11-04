@@ -121,6 +121,7 @@ cp .env.example .env
 | `BASKET_DM` | `true` | Keep your ZIP as a DM message. With `false`, it appears in reply panels only. |
 | `MAX_ACTIVE_LINKS_PER_USER`, `RESOLVE_RATE_PER_MIN`, `DM_DEBOUNCE_SEC` | see `.env.example` | Abuse limits |
 | `STATS_PATH` | unset | A file for the daily usage counters (see [Usage statistics](#usage-statistics)). Unset: they stay in memory. Compose sets `/data/stats.json`. |
+| `STATS_GUILD_IDS` | unset | Comma-separated server ids that get the owner-only `/stats` command, replacing the automatic choice (see [Usage statistics](#usage-statistics)) |
 | `TRUSTED_PROXIES` | `127.0.0.1` | The peers whose `X-Forwarded-For` header is trusted. Compose adds its network gateway. |
 | `HOST_PORT`, `ZIPBOT_SUBNET`, `ZIPBOT_GATEWAY` | `8080`, `172.30.88.0/24`, `.1` | Compose settings: the host port and the network |
 
@@ -166,6 +167,21 @@ docker compose exec zipbot python -m zipbot.stats --days 90 --json
 The report also shows Discord's approximate install counts (servers and users). The newest
 minute may be missing, since the bot saves once a minute. If the file is ever unreadable, the
 bot moves it aside to `stats.json.corrupt` and starts counting afresh.
+
+The app's owners can also see the counters in Discord with `/stats`. It replies privately with
+today, the last 7 and 30 days and all time for the main counters, Discord's approximate install
+counts, and a day-by-day table (the `days` option, 1 to 90, default 7; fewer days are shown if
+they would not fit in one message). The owners are the ones set in the Discord Developer
+Portal: the application's owner, or the admins and developers of the team that owns it. The
+bot checks this on every use, and anyone else gets a short refusal without numbers. `/stats`
+itself is not counted.
+
+`/stats` is never a global command, so user installs never see it. The bot registers it only
+as a server command in the servers it is in whose owner is one of the app's owners, and keeps
+that list up to date when it starts, joins a server or a server changes owner. In those
+servers only administrators see it by default; change that under **Server Settings →
+Integrations**. To pick the servers yourself, set `STATS_GUILD_IDS` to a comma-separated list
+of server ids; this replaces the automatic choice.
 
 ## Development
 
