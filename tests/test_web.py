@@ -761,7 +761,7 @@ async def test_landing_json_ld(client: Any, settings: Settings) -> None:
     assert nodes["WebSite"]["url"] == f"{base}/"
     faq = [(q["name"], q["acceptedAnswer"]["text"]) for q in nodes["FAQPage"]["mainEntity"]]
     assert faq == _visible_faq(html)  # the structured data says exactly what the page shows
-    assert 6 <= len(faq) <= 8
+    assert 6 <= len(faq) <= 10
 
 
 async def test_landing_faq_follows_the_screenshots(client: Any) -> None:

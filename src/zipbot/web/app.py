@@ -62,7 +62,7 @@ CSP = build_csp()
 STATIC_PAGES = {"/": "index.html", "/privacy": "privacy.html", "/terms": "terms.html"}
 # sitemap.xml's <lastmod> per page: bump a page's date whenever its content changes
 # (privacy and terms show the same date as "last updated").
-PAGE_LASTMOD = {"/": "2026-11-04", "/privacy": "2026-11-04", "/terms": "2026-11-03"}
+PAGE_LASTMOD = {"/": "2026-11-05", "/privacy": "2026-11-04", "/terms": "2026-11-03"}
 SECURITY_HEADERS = {
     "Content-Security-Policy": CSP,
     "Referrer-Policy": "no-referrer",

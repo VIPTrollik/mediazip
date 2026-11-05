@@ -20,6 +20,19 @@
 - Images and videos (including GIFs) from a message's attachments and embeds.
 - Not documents, PDFs, archives or other files: Discord's CDN allows browsers to fetch images and videos from other sites (CORS), but not other file types, so the download page can't fetch them.
 
+## Access and permissions
+
+- Installed through Discord's own authorization screen, like any Discord app. It never asks for a password or token, and it is not a browser extension or a client mod.
+- On a user's account it only adds its commands. A server install requests no permissions (no admin, no managing the server).
+- It requests no privileged intents, including Message Content: it reads only the messages it is used on and the ones sent to its DM.
+
+## How it compares
+
+- **Browser extensions** (Discord media downloaders and chat exporters): they run on the Discord website in a desktop browser, with access to the logged-in Discord session. MediaZip needs no extension and works from the Discord desktop and mobile apps.
+- **Client mods** (BetterDiscord or Vencord plugins): they modify the Discord client, which Discord's Terms of Service don't allow, and work on desktop only. MediaZip changes nothing in the Discord app.
+- **Tools that use your user token** (some chat exporters and web apps): automating a user account is against Discord's Terms of Service, and the token gives full access to the account. MediaZip never sees a token or password.
+- **When to use something else:** to archive a whole channel or server, or to save documents and PDFs, use a channel exporter. MediaZip works per message (or a ZIP collected from up to 10 messages by default) and saves images and videos only.
+
 ## Privacy in short
 
 - The files go directly between your browser and Discord's CDN. MediaZip's server never handles the file bytes, and the ZIP is built on your device.
